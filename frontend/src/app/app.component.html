@@ -1,12 +1,75 @@
 <div class="app-container">
-  <h1>AI Engineering Sandbox</h1>
-  <div class="chat-container">
-    <div class="messages">
-      <div *ngFor="let msg of messages" [ngClass]="msg.sender">{{ msg.text }}</div>
+  <header class="app-header">
+    <h1>🏀 NBA Stats Assistant</h1>
+    <div class="server-status">
+      <span class="status-indicator" [ngClass]="serverStatus"></span>
+      <span class="status-text">{{ serverStatus === 'connected' ? 'Connected' : serverStatus === 'disconnected' ? 'Disconnected' : 'Checking...' }}</span>
     </div>
-    <form (ngSubmit)="sendMessage()" class="input-area">
-      <input [(ngModel)]="userInput" name="userInput" placeholder="Type a message..." />
-      <button type="submit">Send</button>
-    </form>
+  </header>
+
+  <div class="main-content">
+    <div class="sidebar">
+      <div class="sidebar-section">
+        <h3>📝 Sample Questions</h3>
+        <div class="sample-questions">
+          <button 
+            *ngFor="let question of sampleQuestions" 
+            class="sample-question-btn"
+            (click)="useSampleQuestion(question)"
+            [disabled]="isProcessing">
+            {{ question }}
+          </button>
+        </div>
+      </div>
+      <div class="sidebar-section">
+        <button class="clear-btn" (click)="clearChat()" [disabled]="isProcessing">
+          🗑️ Clear Chat
+        </button>
+      </div>
+    </div>
+
+    <div class="chat-container">
+      <div class="messages" #messagesContainer>
+        <div *ngFor="let msg of messages" class="message-wrapper" [ngClass]="msg.sender">
+          <div class="message" [ngClass]="{'loading': msg.isLoading}">
+            <div class="message-header">
+              <span class="sender-icon">{{ msg.sender === 'user' ? '👤' : '🤖' }}</span>
+              <span class="timestamp">{{ msg.timestamp | date:'short' }}</span>
+            </div>
+            <div class="message-content">
+              <p>{{ msg.text }}</p>
+              
+              <!-- Structured data display -->
+              <div *ngIf="hasStructuredData(msg)" class="structured-data">
+                <details>
+                  <summary>View Structured Data</summary>
+                  <pre>{{ formatStructuredData(msg.structured_data) }}</pre>
+                </details>
+              </div>
+
+              <!-- Evidence display -->
+              <div *ngIf="msg.evidence && msg.evidence.length > 0" class="evidence">
+                <span class="evidence-label">📊 Evidence:</span>
+                <span *ngFor="let ev of msg.evidence" class="evidence-item">
+                  {{ ev.table }} (ID: {{ ev.id }})
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <form (ngSubmit)="sendMessage()" class="input-area">
+        <input 
+          [(ngModel)]="userInput" 
+          name="userInput" 
+          placeholder="Ask about NBA games, players, scores..." 
+          [disabled]="isProcessing"
+          autocomplete="off" />
+        <button type="submit" [disabled]="isProcessing || !userInput.trim()">
+          {{ isProcessing ? '⏳' : '📤' }} Send
+        </button>
+      </form>
+    </div>
   </div>
 </div>
