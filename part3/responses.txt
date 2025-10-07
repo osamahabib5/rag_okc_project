@@ -2,12 +2,154 @@
 
 Answer the questions listed in the Part 3 section of Submission Requirements. Do NOT use any AI tools for this section. Limit each response to 500 words or fewer.
 
-1. 
+1. Comprehensive Data Pipeline 
 
-2.
+Embedding and retrieval
 
-3.
+The first step was dealing with missing data. Continuous missing data was replaced with median and discrete / categorical data was replaced with mode of respective columns. The next step was embedding. For this, I create structured text representation to consolidate relevant metadata into searchable strings. Strings for matches included team names, dates, scores and special Occasions (Christmas, New Year's Eve), while for players, performance metrics, opponent info and game context was used. This approach helped to maintain semantic similarity with factual and logical context. Core challenge was to determine whether question was about a team or a player. For this, I made a rule-based classifier which used the first six words to identify the pattern and make the team or player's stat determination. Then I used pgvector cosine similarity for initial retrieval (k=8 for games, k=20 for players) and used cascading filters: 
 
-4.
+a. Date filtering: Used to parse normal or special dates like New Year's Eve, Christmas Day and others
+b. Team Matching: Method used to retrieve team names (like OKC would map to Oklohoma City Thunders).
+c. Player Identification: Used fuzzy matching to identify players
+d. Other features: No of points, opponents, matchup combinations
 
-5. 
+Prompt Engineering
+
+Through different experiments, I came up with a set of prompts which:
+
+- Provided Explicit instructions like ""Use the FIRST entry as the answer".
+- Marked labels (HOME_PTS, AWAY_PTS, ROLE), which helped LLM to parse vital information.
+- Specified output patterns explicitly to improve accuracy.
+- Prioritized data fetched by the database over LLM response.
+
+These experimentations led to more contextually enriched prompts, and hence, generated more accurate responses.
+
+Challenges & Solution
+
+- Challenge 1: Is question about a team or player? 
+    Identify Query type using specific words in the question like "who was the leading scorer" meant it's a player query.
+- Challenge 2: Sacramento, SAC, Kings all refer to the same team
+    Incorporated alias mappings using fuzzy matching
+- Challenge 3: Identify date based on special days (Christmas, New Year's eve)
+    Used regex extraction with date normalization
+- Challenge 4: LLM model generated possible correct answers
+    Use responses from database as the source of truth.
+- Challenge 5: Need to determine all entities (home team, away team, player name) like "Luka Dončić score in the Dallas Mavericks' 148-143 win over the Atlanta Hawks".
+    Extract all information and filter by team matchup.
+
+Conclusion:
+
+The final solution balanced semantic search with retrieved data - LLMs were used more to understand the context, rather than generating responses. This hybrid approach helped to incorporate each component's strength.
+
+2. My background revolves around machine learning, data engineering and NLP systems. I utilized several technical skills for this assignment, which include:
+
+- Database Design: Make optimized schema and using PostgresQL with PGvector for similarity search.
+- Embedding: Using vector representation, incorporated semantic search to retrieve relevant context.
+- Data pipeline engineering: ETL processes handling missing values and optimizing data retrieval.
+- Prompt engineering: Providing enriched and precise prompts to generate logical and factual LLM responses.
+
+Key Learnings:
+
+- RAG Pipeline: Make a comprehensive RAG pipeline which incorporates the entire lifecycle of retrieval, embedding and content generation
+- BasketBall Domain Knowledge: Although I follow various sports like soccer and tennis, this assignment also helped me understand basic terminiologies and keywords used in the context of basketball.
+
+Future goals:
+
+I want to deepen my expertise in fine-tuning embedding models , exploring agentic RAG systems that can automatically refine queries and build production-grade RAG pipelines, comprising of monitoring , evaluation and feedback mechanisms.
+
+3. Exploring Sub-posssesion data
+
+For analyzing and answering in-game strategy questions, I would look at following aspects of the data:
+
+a. Optimizing Offensive Outcomes
+
+- Generate heatmaps to analyze which areas of the court have a higher probability of scoring.
+- Analyze spacing patterns (distance between players), which would lead to better possession and hence, higher probability of scoring.
+- Track combinations of players going forward and their stats to provide instructions and determining efficient offensive players.
+
+b. Identify Exposed Defensive Positions
+
+- Track defensive plays after screens/drives to identify slow players.
+- Measure and minimize defensive "scramble time" - how long teams reset in defence after a play.
+- Using heatmap for scorers, identify positions on the court which should be converted to boost defensive efficiency.
+
+c. Play Type Classification
+
+- Analyze player movement trajectories to classify plays (pick-and-roll, isolation, transition) that would generate better outcomes (defensively or offensively).
+- Compare success rates across various play types against specific opponents.
+- Capturing defensive counters (switching, hedging, blitzing) and their effectiveness.
+
+d. Substitution Optimization
+
+- Track player movement intensity (distance, acceleration) throughout games
+- Correlate defensive breakdowns with cumulative player fatigue
+- Optimize rotation timing based on defensive vulnerability window
+
+Implementation - I would build embedding from spatial sequences (player positions over 5-10 frames) to find similar game situations and their outcomes. This enables queries like "find possessions where we ran pick-and-roll with weak-side screening against drop coverage" to immediately pull relevant video and success metrics for real-time coaching adjustments. 
+
+4. Leveraging Player Skeletal Tracking Data for Basketball Operations
+
+a. Fatigue / Injury Detection
+
+Track joint movements of players to predict discomfort, fatigue or potential injury risk, like a player putting more weight on his right leg than the left. Using the player's movement data, a threshold could be defined and alerting medical teams if threshold is breached.
+
+b. Defensive Stance Quantification
+
+Analyze and identify optimal defensive stances through movements like hip height, knee bend angles, shoulder position and others. Compare different stance positions with successful shots made by the opponent and quantifying/ sharing the most ideal ones with the players to increase defensive outcomes.
+
+c. Shooting Form Optimization
+
+Study shooting form variabillity across different time frames and contexts of the game (fatigue, defensive pressure, forward plays). Identify possible points/transitions of the game where the form slumps, like when a player is tired or the team is trailing and players have to make more forward runs.
+
+Exploration Approach
+
+Dimensionality Reduction: Apply PCA to reduce 29×3D skeletal points to a fewer number of data points and still capturing relevant information. Next step would be to cluster similar movement patterns (cutting, jumping, shooting forms).
+Time-Series Analysis: Use sliding windows to quantify motion movements like velocity (how fast each joint is moving), acceleration (how quickly the motion changes) and joint angle changes(how much joints bend or rotate). Moreover, study these metrics to capture probable transition phases (plant -> jump -> release)
+Comparative Analytics: Compare individual player's movement quality with other players and their own historical average to predict changes in their play at any particular time.
+
+Technology
+
+Data Pipeline: Apache Kafka for real-time streaming, PostgreSQL + TimescaleDB for time-series storage.
+ML Framework: PyTorch for deep learning on sequential skeletal data, scikit-learn for clustering.
+Visualization: Custom dashboards with Plotly/D3.js for 3D skeleton replays, annotated with biomechanical overlays.
+Embedding/Retrieval: Vector embeddings of movement sequences (similar to my current RAG implementation) for finding comparable plays across league history.
+
+This transforms raw positional data into coaching decisions, injury prevention, and player development insights.
+
+5. Data Ingestion & Representation
+
+Extracting Important Keywords: Parse unstructured scouting reports and documents using NLP and extract important keywords like player name, position, injury history , contract details etc to make querying easier.
+Clustering Context-based Information: Documents are clustered together in logical/related chunks, like there's a 10 page report for 5 players. 5 logical chunks would be generated , one per player. 
+Multi-modal embeddings: Make embeddings by combining unstructured data (like player notes) with structured data (player's stat, injury records). Afterwards, fine-tune models on basketball specific language to make it understand terms like rebounds, triple-doubles etc.
+
+Graph Knowledge Database
+
+- Build a graph dataabase which connect entities (players, team, contracts) based on relationships, like a player would be matched with his team, contract, performance or so on.
+- Link unstructured coach notes ("worried about his injury") to structured entities (player data). Like a player would be linked to his injuries record.
+- Enable relationship-based queries (e.g., "find comparable players with similar injury profiles")
+
+Retrieval & Analysis Pipeline
+
+- Hybrid search: Combine vector similarity (semantic search) with metadata filtering (position, age range, salary cap)
+- Relevance ranking: After retrieving data, rank it  based on recency (latest information), source reliability (trusted scouts data is more authentic than social resources) and information relevance (present information which is more relevant to the query asked)
+- Constraint validation: Validate LLM responses with constraints like CBA rules to ensure accuracy and relevancy in the responses.
+
+LLM Integration
+
+- Executive Summary: Generate accurate executive briefings from various scouting documents.
+- Comprehensive Comparative Analysis: Provide comparisons like defensive capabilities of Player A and Player B to influence decisions of who to start and who to bench.
+- Scenario-based Discussions: Provide what-if scenarios and their probable outcomes, like "if player A is sold, it would bring $3mn in revenue, but make our attack weaker" 
+
+Validation & Workflow
+
+- Human Oversight: Front office initially reviews the responses before leveraging them in making decisions.
+- Audit trails: Provide trail of documents which produced the information.
+- Feeback Outcome Evaluation: Evaluate decision outcomes to refine model training parameters and optimize prompt engineering.
+
+Deployment
+
+- Dashboard with natural language queries
+- Automated alerts for relevant new intel (e.g., injury reports affecting trade targets)
+- Integration with existing GM tools (salary trackers, draft boards)
+
+This approach transforms raw text into actionable intelligence while maintaining transparency and domain expertise oversight.

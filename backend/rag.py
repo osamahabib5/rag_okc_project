@@ -25,17 +25,10 @@ def parse_special_dates(question):
     special_dates = []
     
     # Extract year if present
-    year_match = re.search(r'\b(20\d{2})\b', question)
+    year_matches = re.findall(r'\b(20\d{2})\b', question)
+    years = [int(y) for y in year_matches] if year_matches else []
     
-    # Extract season year (e.g., "2023 NBA Season" -> 2023)
-    season_match = re.search(r'(\d{4})\s+(?:nba\s+)?season', question_lower)
-    
-    if season_match:
-        year = int(season_match.group(1))
-    elif year_match:
-        year = int(year_match.group(1))
-    else:
-        year = datetime.now().year
+    current_year = datetime.now().year
     
     # Define special date mappings
     special_date_map = {
@@ -60,29 +53,45 @@ def parse_special_dates(question):
     for special_name, date_tuple in special_date_map.items():
         if special_name in question_lower and date_tuple:
             month, day = date_tuple
-            special_dates.append(f"{year}-{month:02d}-{day:02d}")
+            
+            if years:
+                for year in years:
+                    special_dates.append(f"{year}-{month:02d}-{day:02d}")
+            else:
+                for y in [current_year, current_year - 1, current_year - 2]:
+                    special_dates.append(f"{y}-{month:02d}-{day:02d}")
     
-    # Format: M/D pattern (e.g., "4/9" -> April 9)
-    date_pattern_short = r'\b(\d{1,2})/(\d{1,2})\b'
-    matches_short = re.findall(date_pattern_short, question)
-    for match in matches_short:
-        month, day = match
+    # Format: MM/DD/YYYY or M/D/YYYY or M/D/YY
+    date_pattern1 = r'\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b'
+    matches1 = re.findall(date_pattern1, question)
+    for match in matches1:
+        month, day, year = match
+        if len(year) == 2:
+            year = '20' + year
         try:
             special_dates.append(f"{year}-{int(month):02d}-{int(day):02d}")
         except:
             pass
     
-    # Format: MM/DD/YYYY or M/D/YYYY
-    date_pattern1 = r'\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b'
-    matches1 = re.findall(date_pattern1, question)
-    for match in matches1:
-        month, day, year_str = match
-        if len(year_str) == 2:
-            year_str = '20' + year_str
-        try:
-            special_dates.append(f"{year_str}-{int(month):02d}-{int(day):02d}")
-        except:
-            pass
+    # Format: "on 4/9" - need to extract year from context
+    date_pattern_short = r'\bon\s+(\d{1,2})[/](\d{1,2})\b'
+    matches_short = re.findall(date_pattern_short, question_lower)
+    for match in matches_short:
+        month, day = match
+        # Use year from question if available
+        if years:
+            for year in years:
+                try:
+                    special_dates.append(f"{year}-{int(month):02d}-{int(day):02d}")
+                except:
+                    pass
+        else:
+            # Try current and previous years
+            for y in [current_year, current_year - 1, current_year - 2]:
+                try:
+                    special_dates.append(f"{y}-{int(month):02d}-{int(day):02d}")
+                except:
+                    pass
     
     # Format: October 27, 2023 or Oct 27, 2023
     month_names = {
@@ -96,18 +105,18 @@ def parse_special_dates(question):
     date_pattern2 = r'\b(' + '|'.join(month_names.keys()) + r')\.?\s+(\d{1,2}),?\s+(\d{4})\b'
     matches2 = re.findall(date_pattern2, question_lower)
     for match in matches2:
-        month_name, day, year_str = match
+        month_name, day, year = match
         month = month_names[month_name]
-        special_dates.append(f"{year_str}-{month:02d}-{int(day):02d}")
+        special_dates.append(f"{year}-{month:02d}-{int(day):02d}")
     
     # Format: 1-26-24 or 1/26/24
     date_pattern3 = r'\b(\d{1,2})[/-](\d{1,2})[/-](\d{2})\b'
     matches3 = re.findall(date_pattern3, question)
     for match in matches3:
-        month, day, year_str = match
-        year_str = '20' + year_str
+        month, day, year = match
+        year = '20' + year
         try:
-            special_dates.append(f"{year_str}-{int(month):02d}-{int(day):02d}")
+            special_dates.append(f"{year}-{int(month):02d}-{int(day):02d}")
         except:
             pass
     
@@ -118,6 +127,7 @@ def extract_player_name(question):
     """Extract player name from question"""
     # Don't extract if the text is about special days
     if any(day in question.lower() for day in ['christmas', 'new year', 'boxing']):
+        # Only look for actual player names, not date references
         pass
     
     # Common player name patterns
@@ -221,6 +231,7 @@ def determine_query_type(question):
         if first_word_after in player_first_names:
             return 'player'
         elif first_word_after == 'the':
+            # It's asking about a team (e.g., "How many points did the Warriors score")
             return 'game'
         elif first_word_after in team_identifiers:
             return 'game'
@@ -231,10 +242,10 @@ def determine_query_type(question):
         'triple-double',
         'his nba debut',
         'his debut',
+        'debut',
         'his performance',
         'player recorded',
-        'player had',
-        'which player had'
+        'player had'
     ]
     
     for indicator in strong_player_indicators:
@@ -269,9 +280,11 @@ def determine_query_type(question):
     
     # Check for pattern "against the [Team]" - this is typically about teams unless player name is present
     if 'against the' in question_lower or 'against' in question_lower:
+        # Check if a player name is explicitly mentioned
         if extract_player_name(question):
             return 'player'
         else:
+            # Likely asking about team vs team
             return 'game'
     
     # Default to game when uncertain
@@ -279,9 +292,8 @@ def determine_query_type(question):
 
 
 def extract_all_teams_from_question(question):
-    """Extract all teams mentioned in the question (for player queries about specific matchups)"""
+    """Extract ALL team names mentioned in the question"""
     question_lower = question.lower()
-    teams_found = []
     
     team_mappings = {
         'warriors': ['warriors', 'golden state', 'gsw'],
@@ -300,22 +312,24 @@ def extract_all_teams_from_question(question):
         'clippers': ['clippers', 'la clippers', 'lac'],
         'jazz': ['jazz', 'utah', 'uta'],
         'pelicans': ['pelicans', 'new orleans', 'nop'],
-        'grizzlies': ['grizzlies', 'memphis', 'mem']
+        'grizzlies': ['grizzlies', 'memphis', 'mem'],
+        'cavaliers': ['cavaliers', 'cleveland', 'cle', 'cavs']
     }
     
-    # Search for all team mentions
+    found_teams = []
+    
     for canonical_name, aliases in team_mappings.items():
         for alias in aliases:
             if alias in question_lower:
-                if canonical_name not in teams_found:
-                    teams_found.append(canonical_name)
+                if canonical_name not in found_teams:
+                    found_teams.append(canonical_name)
                 break
     
-    return teams_found
+    return found_teams
 
 
 def extract_team_from_question(question):
-    """Extract the primary team name being asked about in the question"""
+    """Extract the PRIMARY team name being asked about in the question"""
     question_lower = question.lower()
     
     team_mappings = {
@@ -338,13 +352,13 @@ def extract_team_from_question(question):
         'grizzlies': ['grizzlies', 'memphis', 'mem']
     }
     
-    # For player queries with possessive (e.g., "OKC's victory"), extract the possessive team
-    possessive_pattern = r"([a-z]+)'s\s+(?:victory|win|game)"
-    possessive_match = re.search(possessive_pattern, question_lower)
-    if possessive_match:
-        team_mention = possessive_match.group(1)
+    # Look for possessive form first (e.g., "OKC's victory")
+    possessive_pattern = r'([a-z]+)\'s\s+(?:victory|win)'
+    match = re.search(possessive_pattern, question_lower)
+    if match:
+        team_abbr = match.group(1)
         for canonical_name, aliases in team_mappings.items():
-            if any(alias == team_mention or alias in team_mention for alias in aliases):
+            if team_abbr in aliases:
                 return canonical_name
     
     # Try to find team mentioned after "did the" or "did"
@@ -357,7 +371,7 @@ def extract_team_from_question(question):
             if any(alias in potential_team for alias in aliases):
                 return canonical_name
     
-    # Fallback: search anywhere in question (return first match)
+    # Fallback: search anywhere in question - return first match
     for canonical_name, aliases in team_mappings.items():
         for alias in aliases:
             if alias in question_lower:
@@ -370,9 +384,9 @@ def extract_opponent_team(question):
     """Extract opponent team from question (e.g., 'against the Mavericks', 'over SAC')"""
     question_lower = question.lower()
     
-    # Pattern: "over [Team]" or "against [Team]" or "vs [Team]"
+    # Pattern: "against the [Team]" or "vs [Team]" or "over [Team]"
     opponent_patterns = [
-        r'over\s+(?:the\s+)?([a-z]+?)(?:\s+on|\s+in|\s+\d|,|$)',
+        r'(?:victory|win)\s+over\s+([a-z]+)',
         r'against (?:the\s+)?([a-z\s]+?)(?:\s+on|\s+in|\s+\d|$)',
         r'vs\.?\s+(?:the\s+)?([a-z\s]+?)(?:\s+on|\s+in|\s+\d|$)',
         r'v\.?\s+(?:the\s+)?([a-z\s]+?)(?:\s+on|\s+in|\s+\d|$)',
@@ -390,22 +404,107 @@ def extract_opponent_team(question):
     return None
 
 
-def extract_points_from_question(question):
-    """Extract specific points value mentioned in question (e.g., '40 points')"""
-    question_lower = question.lower()
+def extract_score_from_question(question):
+    """Extract score from question (e.g., '144-110')"""
+    score_pattern = r'(\d{2,3})-(\d{2,3})'
+    match = re.search(score_pattern, question)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None, None
+
+
+def find_opponent_team_from_db(cx, opponent_team, dates, player_name=None):
+    """
+    Find the other team in a game when only one team is mentioned.
+    Returns the opponent team and game_id.
+    """
+    if not opponent_team or not dates:
+        return None, None
     
-    # Pattern: "had X points" or "X points on"
-    points_patterns = [
-        r'had\s+(\d+)\s+points?',
-        r'(\d+)\s+points?\s+on',
-        r'scored\s+(\d+)\s+points?'
-    ]
+    print(f"Searching for opponent of {opponent_team} on {dates}")
     
-    for pattern in points_patterns:
-        match = re.search(pattern, question_lower)
-        if match:
-            return int(match.group(1))
+    # Query to find the game with the specified team on the specified date
+    sql = """
+    SELECT gd.game_id, gd.home_team_id, gd.away_team_id, gd.game_timestamp,
+           ht.name as home_team_name, ht.abbreviation as home_abbr,
+           at.name as away_team_name, at.abbreviation as away_abbr
+    FROM game_details gd
+    JOIN teams ht ON gd.home_team_id = ht.team_id
+    JOIN teams at ON gd.away_team_id = at.team_id
+    WHERE DATE(gd.game_timestamp) = :date
+    """
     
+    for date in dates:
+        result = cx.execute(text(sql), {"date": date}).mappings().all()
+        
+        for row in result:
+            home_team = row['home_team_name'].lower()
+            away_team = row['away_team_name'].lower()
+            
+            # Check if opponent_team is in this game
+            if opponent_team in home_team or opponent_team in away_team:
+                # Determine which team is the OTHER team
+                if opponent_team in home_team:
+                    other_team = row['away_team_name'].lower()
+                    other_team_canonical = extract_team_from_question(other_team)
+                    print(f"✓ Found game: {row['home_team_name']} vs {row['away_team_name']}")
+                    print(f"  Opponent team: {other_team_canonical}")
+                    return other_team_canonical, row['game_id']
+                else:
+                    other_team = row['home_team_name'].lower()
+                    other_team_canonical = extract_team_from_question(other_team)
+                    print(f"✓ Found game: {row['home_team_name']} vs {row['away_team_name']}")
+                    print(f"  Opponent team: {other_team_canonical}")
+                    return other_team_canonical, row['game_id']
+    
+    print(f"❌ No game found for {opponent_team} on {dates}")
+    return None, None
+
+
+def get_player_stats_directly(cx, player_name, game_id):
+    """
+    Directly retrieve player stats from database using player name and game_id.
+    """
+    if not player_name or not game_id:
+        return None
+    
+    print(f"Retrieving stats for {player_name} in game {game_id}")
+    
+    sql = """
+    SELECT pbs.game_id, pbs.person_id, pbs.team_id,
+           pbs.starter, pbs.points, pbs.assists, 
+           pbs.offensive_reb, pbs.defensive_reb,
+           (pbs.offensive_reb + pbs.defensive_reb) as total_rebounds,
+           pbs.steals, pbs.blocks, pbs.turnovers,
+           pbs.fg2_made, pbs.fg2_attempted,
+           pbs.fg3_made, pbs.fg3_attempted,
+           pbs.ft_made, pbs.ft_attempted,
+           p.first_name, p.last_name,
+           t.name as team_name, t.city as team_city, t.abbreviation as team_abbr,
+           gd.game_timestamp, gd.home_team_id, gd.away_team_id,
+           gd.home_points, gd.away_points, gd.winning_team_id,
+           ht.name as home_team_name, ht.abbreviation as home_abbr,
+           at.name as away_team_name, at.abbreviation as away_abbr
+    FROM player_box_scores pbs
+    JOIN players p ON pbs.person_id = p.player_id
+    JOIN teams t ON pbs.team_id = t.team_id
+    JOIN game_details gd ON pbs.game_id = gd.game_id
+    JOIN teams ht ON gd.home_team_id = ht.team_id
+    JOIN teams at ON gd.away_team_id = at.team_id
+    WHERE pbs.game_id = :game_id
+    """
+    
+    results = cx.execute(text(sql), {"game_id": game_id}).mappings().all()
+    
+    # Filter by player name
+    player_lower = player_name.lower()
+    for row in results:
+        full_name = f"{row['first_name']} {row['last_name']}".lower()
+        if player_lower in full_name or full_name in player_lower:
+            print(f"✓ Found player stats: {row['first_name']} {row['last_name']} - {row['points']} pts")
+            return [dict(row)]
+    
+    print(f"❌ Player {player_name} not found in game {game_id}")
     return None
 
 
@@ -436,7 +535,7 @@ def retrieve_games(cx, qvec, k=8):
     return cx.execute(text(sql), {"q": qvec, "k": k}).mappings().all()
 
 
-def retrieve_player_stats(cx, qvec, k=20):
+def retrieve_player_stats(cx, qvec, k=15):
     """Retrieve relevant player performances using vector similarity"""
     sql = """
     SELECT pbs.game_id, pbs.person_id, pbs.team_id,
@@ -498,22 +597,9 @@ def filter_by_player(rows, player_name):
     return filtered if filtered else rows
 
 
-def filter_by_points(rows, points):
-    """Filter rows by specific points scored"""
-    if not points:
-        return rows
-    
-    filtered = []
-    for row in rows:
-        if row['points'] == points:
-            filtered.append(row)
-    
-    return filtered if filtered else rows
-
-
-def filter_by_matchup(rows, teams_list):
-    """Filter rows by specific matchup (both teams must be involved in the game)"""
-    if not teams_list or len(teams_list) < 2:
+def filter_by_matchup(rows, teams):
+    """Filter rows by game matchup - BOTH teams must be involved"""
+    if not teams or len(teams) < 2:
         return rows
     
     filtered = []
@@ -522,17 +608,35 @@ def filter_by_matchup(rows, teams_list):
         home_team = row['home_team_name'].lower()
         away_team = row['away_team_name'].lower()
         
-        # Check if both teams from the list are in this game
-        teams_in_game = []
-        for team in teams_list:
+        # Check if all specified teams are in this game
+        teams_in_game = set()
+        for team in teams:
             if team in home_team or team in away_team:
-                teams_in_game.append(team)
+                teams_in_game.add(team)
         
-        # If we have at least 2 teams from the list in this game, it's a match
-        if len(teams_in_game) >= 2:
+        # Only include if ALL specified teams are in this game
+        if len(teams_in_game) == len(teams):
             filtered.append(row)
     
-    return filtered if filtered else rows
+    return filtered
+
+
+def filter_by_score(rows, score1, score2):
+    """Filter rows by exact game score"""
+    if score1 is None or score2 is None:
+        return rows
+    
+    filtered = []
+    
+    for row in rows:
+        home_pts = row['home_points']
+        away_pts = row['away_points']
+        
+        # Check both possible score combinations
+        if (home_pts == score1 and away_pts == score2) or (home_pts == score2 and away_pts == score1):
+            filtered.append(row)
+    
+    return filtered
 
 
 def filter_by_teams(rows, team1, team2=None):
@@ -567,14 +671,36 @@ def filter_by_opponent(rows, opponent_team):
         away_team = row['away_team_name'].lower()
         player_team = row['team_name'].lower() if 'team_name' in row else None
         
+        # Determine which team is the opponent
         if player_team:
+            # For player stats, opponent is the team they're not on
             if opponent_team in home_team and player_team not in home_team:
                 filtered.append(row)
             elif opponent_team in away_team and player_team not in away_team:
                 filtered.append(row)
         else:
+            # For game stats
             if opponent_team in home_team or opponent_team in away_team:
                 filtered.append(row)
+    
+    return filtered if filtered else rows
+
+
+def filter_by_points(rows, question):
+    """Filter players by specific point total if mentioned"""
+    # Look for "40 points" or "had 40 points" pattern
+    points_pattern = r'(\d+)\s+points?'
+    match = re.search(points_pattern, question.lower())
+    
+    if not match:
+        return rows
+    
+    target_points = int(match.group(1))
+    
+    filtered = [r for r in rows if r['points'] == target_points]
+    
+    if filtered:
+        print(f"Filtered by {target_points} points: {len(filtered)} matches")
     
     return filtered if filtered else rows
 
@@ -587,10 +713,14 @@ def find_leading_scorer(rows, question):
     if not rows:
         return rows
     
+    # Get all players from the same game
     game_id = rows[0]['game_id']
     same_game_players = [r for r in rows if r['game_id'] == game_id]
     
+    # Find max points
     max_points = max(r['points'] for r in same_game_players)
+    
+    # Get player with max points
     leading_scorer = [r for r in same_game_players if r['points'] == max_points]
     
     print(f"Leading scorer analysis: {len(same_game_players)} players in game {game_id}")
@@ -600,17 +730,54 @@ def find_leading_scorer(rows, question):
     return leading_scorer if leading_scorer else rows
 
 
+def validate_game_context(rows, all_teams, score1, score2):
+    """Validate that the retrieved game matches all the criteria from the question"""
+    if not rows:
+        return False
+    
+    row = rows[0]
+    
+    # Check if all mentioned teams are in this game
+    if all_teams and len(all_teams) >= 2:
+        home_team = row['home_team_name'].lower()
+        away_team = row['away_team_name'].lower()
+        
+        teams_found = 0
+        for team in all_teams:
+            if team in home_team or team in away_team:
+                teams_found += 1
+        
+        if teams_found != len(all_teams):
+            print(f"❌ Team validation failed: Expected {all_teams}, found {teams_found}/{len(all_teams)} teams")
+            return False
+    
+    # Check if score matches (if specified)
+    if score1 is not None and score2 is not None:
+        home_pts = row['home_points']
+        away_pts = row['away_points']
+        
+        score_match = (home_pts == score1 and away_pts == score2) or (home_pts == score2 and away_pts == score1)
+        
+        if not score_match:
+            print(f"❌ Score validation failed: Expected {score1}-{score2}, found {home_pts}-{away_pts}")
+            return False
+    
+    print(f"✓ Game validation passed")
+    return True
+
+
 def build_game_context(rows, question):
     """Build context string from game rows with explicit home/away labeling"""
     context_lines = []
     asked_team = extract_team_from_question(question)
     
     for idx, r in enumerate(rows):
-        if idx >= 5:
+        if idx >= 5:  # Limit to top 5 for efficiency
             break
             
         ts = parse_timestamp(r['game_timestamp'])
         date = ts.strftime('%Y-%m-%d')
+        date_display = ts.strftime('%B %d, %Y')
         
         special_date_label = ""
         if ts.month == 12 and ts.day == 25:
@@ -663,7 +830,7 @@ def build_player_context(rows, question):
     context_lines = []
     
     for idx, r in enumerate(rows):
-        if idx >= 5:
+        if idx >= 3:  # Limit to top 3 for leading scorer questions
             break
             
         ts = parse_timestamp(r['game_timestamp'])
@@ -683,6 +850,7 @@ def build_player_context(rows, question):
         player_team_role = "HOME" if r['team_id'] == r['home_team_id'] else "AWAY"
         opponent = home if player_team_role == "AWAY" else away
         
+        # Check for triple-double
         is_triple_double = sum([
             r['points'] >= 10,
             r['total_rebounds'] >= 10,
@@ -694,7 +862,7 @@ def build_player_context(rows, question):
         context_line = (
             f"game_id:{r['game_id']} | {special_date_label}date:{date} | "
             f"PLAYER:{player} | TEAM:{team}({r['team_abbr']}) | ROLE:{player_team_role} | "
-            f"VS:{opponent} | MATCHUP:{home} vs {away} | "
+            f"VS:{opponent} | GAME_SCORE:{r['home_points']}-{r['away_points']} | "
             f"PTS:{r['points']} | REB:{r['total_rebounds']} | AST:{r['assists']} | "
             f"STL:{r['steals']} | BLK:{r['blocks']} | TO:{r['turnovers']} | "
             f"FG2:{r['fg2_made']}/{r['fg2_attempted']} | FG3:{r['fg3_made']}/{r['fg3_attempted']} | "
@@ -729,60 +897,78 @@ def extract_structured_answer(llm_response, question_id, query_type, rows, quest
     no_info_indicators = [
         'not found', 'no information', 'cannot find', 'not available',
         'no data', 'missing', 'unable to find', 'not in the context',
-        'no player', 'no game'
+        'no mention'
     ]
     
     response_lower = llm_response.lower()
     has_no_info = any(indicator in response_lower for indicator in no_info_indicators)
     
-    # If no data found or LLM indicates no info, return template defaults
     if has_no_info or not rows:
-        print("No data found - returning template defaults")
+        # Return template with default values
         template = get_template_for_question(question_id)
+        if query_type == 'player':
+            template['evidence'] = [{"table": "player_box_score", "id": 0}]
+        else:
+            template['evidence'] = [{"table": "game_details", "id": 0}]
         return template
     
-    # USE DATABASE AS SOURCE OF TRUTH
+    # USE DATABASE AS SOURCE OF TRUTH - Don't rely on LLM parsing
     if query_type == 'player' and rows:
-        top_row = rows[0]
+        top_row = rows[0]  # Already filtered and sorted, so top row is the answer
         
+        # Extract player name from database
         result['player_name'] = f"{top_row['first_name']} {top_row['last_name']}"
+        
+        # Extract points from database
         result['points'] = int(top_row['points'])
         
+        # Extract rebounds if relevant
         if 'rebounds' in question.lower() or 'triple' in question.lower():
             result['rebounds'] = int(top_row['total_rebounds'])
         
+        # Extract assists if relevant
         if 'assists' in question.lower() or 'triple' in question.lower():
             result['assists'] = int(top_row['assists'])
         
+        # Build evidence
         result['evidence'] = [{"table": "player_box_score", "id": int(top_row['game_id'])}]
     
+    # For game queries
     elif query_type == 'game' and rows:
         top_row = rows[0]
         
+        # Extract points - try LLM first as fallback
         points_match = re.search(r'(\d+)\s*points?', llm_response, re.IGNORECASE)
         if points_match:
             result['points'] = int(points_match.group(1))
         
+        # Extract winner
         winner_match = re.search(r'(?:winner|won)[:\s]+([A-Za-z\s]+?)(?:\s*\(|\s*score|\s*with|\.|$)', llm_response, re.IGNORECASE)
         if winner_match:
             result['winner'] = winner_match.group(1).strip()
         
+        # Extract score
         score_match = re.search(r'(\d+)-(\d+)', llm_response)
         if score_match:
             result['score'] = f"{score_match.group(1)}-{score_match.group(2)}"
         
+        # Build evidence
         result['evidence'] = [{"table": "game_details", "id": int(top_row['game_id'])}]
     
     else:
-        print("Unexpected query type - returning template defaults")
+        # Fallback - return template
         template = get_template_for_question(question_id)
+        if query_type == 'player':
+            template['evidence'] = [{"table": "player_box_score", "id": 0}]
+        else:
+            template['evidence'] = [{"table": "game_details", "id": 0}]
         return template
     
     return result
 
 
 def answer_question(question, question_id, cx):
-    """Answer a question using RAG"""
+    """Answer a question using RAG - optimized"""
     query_type = determine_query_type(question)
     print(f"Query type: {query_type}")
     
@@ -792,64 +978,128 @@ def answer_question(question, question_id, cx):
     all_teams = extract_all_teams_from_question(question)
     asked_team = extract_team_from_question(question)
     opponent_team = extract_opponent_team(question)
-    specific_points = extract_points_from_question(question)
+    score1, score2 = extract_score_from_question(question)
     
     if special_dates:
         print(f"Dates: {special_dates}")
-    if player_name:
-        print(f"Player: {player_name}")
     if all_teams:
         print(f"All teams mentioned: {all_teams}")
+    if player_name:
+        print(f"Player: {player_name}")
     if asked_team:
         print(f"Primary team: {asked_team}")
     if opponent_team:
         print(f"Opponent: {opponent_team}")
-    if specific_points:
-        print(f"Specific points: {specific_points}")
+    if score1 and score2:
+        print(f"Score: {score1}-{score2}")
     
+    # SPECIAL LOGIC: If player name + date + one team is given, find the other team
+    if query_type == 'player' and player_name and special_dates and len(all_teams) == 1:
+        print(f"🔍 Special case: Player + Date + One Team - Finding opponent...")
+        mentioned_team = all_teams[0]
+        other_team, game_id = find_opponent_team_from_db(cx, mentioned_team, special_dates, player_name)
+        
+        if other_team and game_id:
+            # Ensure both teams are different
+            if other_team == mentioned_team:
+                print(f"❌ Error: Both teams are the same ({mentioned_team})")
+                template = get_template_for_question(question_id)
+                template['evidence'] = [{"table": "player_box_score", "id": 0}]
+                return template, [], "Invalid game: both teams are the same."
+            
+            # Get player stats directly from database
+            rows = get_player_stats_directly(cx, player_name, game_id)
+            
+            if rows:
+                print(f"✓ Retrieved player stats directly from database")
+                ctx = build_player_context(rows, question)
+                
+                prompt = f"""Answer using ONLY the context below.
+
+Context:
+{ctx}
+
+Question: {question}
+
+Instructions:
+- Extract: PLAYER name, PTS (points)
+- Use EXACT numbers from the context
+- Format: "[Player Name] | Points: [X] | game_id: [ID]"
+
+Answer:"""
+                
+                llm_response = ollama_generate(LLM_MODEL, prompt)
+                result = extract_structured_answer(llm_response, question_id, query_type, rows, question)
+                return result, rows, llm_response
+            else:
+                print(f"❌ Player stats not found")
+                template = get_template_for_question(question_id)
+                template['evidence'] = [{"table": "player_box_score", "id": 0}]
+                return template, [], "Player stats not found in the database."
+        else:
+            print(f"❌ Could not find the game")
+            template = get_template_for_question(question_id)
+            template['evidence'] = [{"table": "player_box_score", "id": 0}]
+            return template, [], "Game not found in the database."
+    
+    # REGULAR LOGIC: Use embeddings for retrieval
     qvec = ollama_embed(EMBED_MODEL, question)
     
     if query_type == 'player':
-        rows = retrieve_player_stats(cx, qvec, k=20)
+        rows = retrieve_player_stats(cx, qvec, k=15)
         
-        # Apply filters in order of specificity
+        # Apply filters
         if special_dates:
             rows = filter_by_dates(rows, special_dates)
             print(f"After date filter: {len(rows)} rows")
         
-        # If multiple teams mentioned (e.g., "OKC's victory over SAC"), filter by matchup
-        if len(all_teams) >= 2:
+        # Filter by matchup (both teams must be in the game)
+        if all_teams and len(all_teams) >= 2:
             rows = filter_by_matchup(rows, all_teams)
             print(f"After matchup filter ({all_teams}): {len(rows)} rows")
-        elif asked_team and opponent_team:
-            # Use both team filters
-            rows = filter_by_teams(rows, asked_team, opponent_team)
-            print(f"After team filter ({asked_team} vs {opponent_team}): {len(rows)} rows")
-        elif asked_team:
-            rows = filter_by_teams(rows, asked_team)
-            print(f"After team filter ({asked_team}): {len(rows)} rows")
-        elif opponent_team:
-            rows = filter_by_opponent(rows, opponent_team)
-            print(f"After opponent filter ({opponent_team}): {len(rows)} rows")
         
-        if specific_points:
-            rows = filter_by_points(rows, specific_points)
-            print(f"After points filter ({specific_points}): {len(rows)} rows")
+        # Filter by score if specified
+        if score1 and score2:
+            rows = filter_by_score(rows, score1, score2)
+            print(f"After score filter ({score1}-{score2}): {len(rows)} rows")
+        
+        # Validate the game matches all criteria
+        if all_teams and len(all_teams) >= 2:
+            if not validate_game_context(rows, all_teams, score1, score2):
+                print("❌ Game validation failed - returning empty result")
+                template = get_template_for_question(question_id)
+                template['evidence'] = [{"table": "player_box_score", "id": 0}]
+                return template, [], "The specified game was not found in the database."
         
         if player_name:
             rows = filter_by_player(rows, player_name)
-            print(f"After player filter ({player_name}): {len(rows)} rows")
+            print(f"After player filter: {len(rows)} rows")
+        
+        if opponent_team and not all_teams:
+            rows = filter_by_opponent(rows, opponent_team)
+            print(f"After opponent filter: {len(rows)} rows")
+        
+        if asked_team and not all_teams:
+            rows = filter_by_teams(rows, asked_team)
+            print(f"After team filter: {len(rows)} rows")
+        
+        # Filter by point total if specified
+        rows = filter_by_points(rows, question)
         
         # Special handling for "leading scorer" questions
         rows = find_leading_scorer(rows, question)
         
         if not rows:
-            print("No relevant player data found after filtering")
+            print("No relevant player data found")
             template = get_template_for_question(question_id)
-            return template, [], "No data found matching the criteria."
+            template['evidence'] = [{"table": "player_box_score", "id": 0}]
+            return template, [], "Information not available in the database."
         
+        # Print best match for debugging with game info
         if rows:
-            print(f"Best match: {rows[0]['first_name']} {rows[0]['last_name']} - {rows[0]['points']} pts on {parse_timestamp(rows[0]['game_timestamp']).strftime('%Y-%m-%d')}")
+            ts = parse_timestamp(rows[0]['game_timestamp'])
+            date = ts.strftime('%Y-%m-%d')
+            print(f"Best match: {rows[0]['first_name']} {rows[0]['last_name']} - {rows[0]['points']} pts on {date}")
             print(f"  Game: {rows[0]['home_team_name']} vs {rows[0]['away_team_name']}")
         
         ctx = build_player_context(rows, question)
@@ -863,10 +1113,8 @@ Question: {question}
 
 Instructions:
 - The FIRST entry in the context is the correct answer
-- Look at the MATCHUP field to see which teams played
 - Extract: PLAYER name, PTS (points), REB (rebounds), AST (assists)
 - Use EXACT numbers from the context
-- If no matching data exists, say "No data found"
 - Format: "[Player Name] | Points: [X] | Rebounds: [Y] | Assists: [Z] | game_id: [ID]"
 
 Answer:"""
@@ -881,9 +1129,10 @@ Answer:"""
             rows = filter_by_teams(rows, asked_team or opponent_team)
         
         if not rows:
-            print("No relevant game data found after filtering")
+            print("No relevant game data found")
             template = get_template_for_question(question_id)
-            return template, [], "No data found matching the criteria."
+            template['evidence'] = [{"table": "game_details", "id": 0}]
+            return template, [], "Information not available in the database."
         
         ctx = build_game_context(rows, question)
         
@@ -899,12 +1148,13 @@ Instructions:
 - Use HOME_PTS for home team score, AWAY_PTS for away team score
 - If ASKED_PTS is shown, that's the answer for the asked team
 - Use EXACT numbers from the context
-- If no matching data exists, say "No data found"
 - Format: "[Team] scored [X] points. Winner: [Team] ([HOME/AWAY]). Score: [X-Y]. game_id: [ID]"
 
 Answer:"""
     
     llm_response = ollama_generate(LLM_MODEL, prompt)
+    
+    # Extract answer directly from database rows (source of truth)
     result = extract_structured_answer(llm_response, question_id, query_type, rows, question)
     
     return result, rows, llm_response
@@ -936,6 +1186,7 @@ def main():
             # Use the result directly (already in correct format)
             results.append({"id": q['id'], "result": result})
     
+    # Write results
     with open(ANSWERS_PATH, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     
