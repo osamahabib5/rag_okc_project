@@ -124,12 +124,12 @@
   {
     "id": 10,
     "result": {
-      "player_name": "Ivica Zubac",
-      "points": 18,
+      "player_name": "",
+      "points": 0,
       "evidence": [
         {
           "table": "player_box_score",
-          "id": 22300273
+          "id": 0
         }
       ]
     }

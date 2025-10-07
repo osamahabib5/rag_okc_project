@@ -19,10 +19,58 @@ ANSWERS_PATH = os.path.normpath(os.path.join(BASE_DIR, "..", "part1", "answers.j
 TEMPLATE_PATH = os.path.normpath(os.path.join(BASE_DIR, "..", "part1", "answers_template.json"))
 
 
+def parse_nba_season_date(question):
+    """
+    Parse dates considering NBA season logic.
+    NBA seasons run from October to June of the following year.
+    E.g., "2023 NBA Season" = October 2023 to June 2024
+    """
+    question_lower = question.lower()
+    
+    # Look for "YYYY NBA Season" pattern
+    season_pattern = r'(\d{4})\s+nba\s+season'
+    season_match = re.search(season_pattern, question_lower)
+    
+    if season_match:
+        season_start_year = int(season_match.group(1))
+        print(f"Found NBA season: {season_start_year}-{season_start_year + 1}")
+        
+        # Now look for date pattern like "4/9" or "4-9"
+        date_pattern = r'\b(\d{1,2})[/-](\d{1,2})\b'
+        date_match = re.search(date_pattern, question)
+        
+        if date_match:
+            month = int(date_match.group(1))
+            day = int(date_match.group(2))
+            
+            # NBA season logic:
+            # October (10) - December (12) = season_start_year
+            # January (1) - June (6) = season_start_year + 1
+            # July (7) - September (9) = off-season, but if mentioned, likely next year
+            
+            if month >= 10:  # October, November, December
+                year = season_start_year
+            elif month <= 6:  # January to June
+                year = season_start_year + 1
+            else:  # July, August, September - typically off-season
+                year = season_start_year + 1
+            
+            date_str = f"{year}-{month:02d}-{day:02d}"
+            print(f"Converted date {month}/{day} in {season_start_year} season → {date_str}")
+            return [date_str]
+    
+    return None
+
+
 def parse_special_dates(question):
     """Parse special dates from question and return list of possible dates"""
     question_lower = question.lower()
     special_dates = []
+    
+    # First check for NBA season dates
+    nba_season_dates = parse_nba_season_date(question)
+    if nba_season_dates:
+        return nba_season_dates
     
     # Extract year if present
     year_matches = re.findall(r'\b(20\d{2})\b', question)
@@ -121,6 +169,29 @@ def parse_special_dates(question):
             pass
     
     return special_dates
+
+
+def extract_exact_points(question):
+    """
+    Extract exact point total from question.
+    Returns None if not found, or the integer points value.
+    """
+    # Pattern: "had 40 points" or "40 points" or "scored 40"
+    points_patterns = [
+        r'had\s+(\d+)\s+points?',
+        r'scored\s+(\d+)\s+points?',
+        r'(\d+)\s+points?',
+        r'with\s+(\d+)\s+points?'
+    ]
+    
+    for pattern in points_patterns:
+        match = re.search(pattern, question.lower())
+        if match:
+            points = int(match.group(1))
+            print(f"Extracted exact point total: {points}")
+            return points
+    
+    return None
 
 
 def extract_player_name(question):
@@ -686,23 +757,22 @@ def filter_by_opponent(rows, opponent_team):
     return filtered if filtered else rows
 
 
-def filter_by_points(rows, question):
-    """Filter players by specific point total if mentioned"""
-    # Look for "40 points" or "had 40 points" pattern
-    points_pattern = r'(\d+)\s+points?'
-    match = re.search(points_pattern, question.lower())
-    
-    if not match:
+def filter_by_exact_points(rows, exact_points):
+    """
+    Filter players by EXACT point total.
+    Returns ONLY players with exactly this many points, or empty list if none.
+    """
+    if exact_points is None:
         return rows
     
-    target_points = int(match.group(1))
-    
-    filtered = [r for r in rows if r['points'] == target_points]
+    filtered = [r for r in rows if r['points'] == exact_points]
     
     if filtered:
-        print(f"Filtered by {target_points} points: {len(filtered)} matches")
+        print(f"✓ Found {len(filtered)} player(s) with exactly {exact_points} points")
+    else:
+        print(f"❌ No players found with exactly {exact_points} points")
     
-    return filtered if filtered else rows
+    return filtered
 
 
 def find_leading_scorer(rows, question):
@@ -974,6 +1044,7 @@ def answer_question(question, question_id, cx):
     
     # Extract contextual information
     special_dates = parse_special_dates(question)
+    exact_points = extract_exact_points(question)
     player_name = extract_player_name(question)
     all_teams = extract_all_teams_from_question(question)
     asked_team = extract_team_from_question(question)
@@ -982,6 +1053,8 @@ def answer_question(question, question_id, cx):
     
     if special_dates:
         print(f"Dates: {special_dates}")
+    if exact_points:
+        print(f"Exact points required: {exact_points}")
     if all_teams:
         print(f"All teams mentioned: {all_teams}")
     if player_name:
@@ -994,7 +1067,7 @@ def answer_question(question, question_id, cx):
         print(f"Score: {score1}-{score2}")
     
     # SPECIAL LOGIC: If player name + date + one team is given, find the other team
-    if query_type == 'player' and player_name and special_dates and len(all_teams) == 1:
+    if query_type == 'player' and player_name and special_dates and len(all_teams) == 1 and not exact_points:
         print(f"🔍 Special case: Player + Date + One Team - Finding opponent...")
         mentioned_team = all_teams[0]
         other_team, game_id = find_opponent_team_from_db(cx, mentioned_team, special_dates, player_name)
@@ -1046,12 +1119,24 @@ Answer:"""
     qvec = ollama_embed(EMBED_MODEL, question)
     
     if query_type == 'player':
-        rows = retrieve_player_stats(cx, qvec, k=15)
+        rows = retrieve_player_stats(cx, qvec, k=20)
         
         # Apply filters
         if special_dates:
             rows = filter_by_dates(rows, special_dates)
             print(f"After date filter: {len(rows)} rows")
+        
+        # CRITICAL: Filter by exact points FIRST if specified
+        if exact_points is not None:
+            rows = filter_by_exact_points(rows, exact_points)
+            print(f"After exact points filter ({exact_points}): {len(rows)} rows")
+            
+            # If no one scored exactly that many points, return empty
+            if not rows:
+                print(f"❌ No player scored exactly {exact_points} points on the specified date")
+                template = get_template_for_question(question_id)
+                template['evidence'] = [{"table": "player_box_score", "id": 0}]
+                return template, [], f"No player scored exactly {exact_points} points on the specified date."
         
         # Filter by matchup (both teams must be in the game)
         if all_teams and len(all_teams) >= 2:
@@ -1083,11 +1168,9 @@ Answer:"""
             rows = filter_by_teams(rows, asked_team)
             print(f"After team filter: {len(rows)} rows")
         
-        # Filter by point total if specified
-        rows = filter_by_points(rows, question)
-        
-        # Special handling for "leading scorer" questions
-        rows = find_leading_scorer(rows, question)
+        # Special handling for "leading scorer" questions (only if no exact points specified)
+        if exact_points is None:
+            rows = find_leading_scorer(rows, question)
         
         if not rows:
             print("No relevant player data found")
