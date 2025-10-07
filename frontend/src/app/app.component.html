@@ -1,27 +1,47 @@
 <div class="app-container">
   <header class="app-header">
-    <h1>🏀 NBA Stats Assistant</h1>
-    <div class="server-status">
-      <span class="status-indicator" [ngClass]="serverStatus"></span>
-      <span class="status-text">{{ serverStatus === 'connected' ? 'Connected' : serverStatus === 'disconnected' ? 'Disconnected' : 'Checking...' }}</span>
+    <div class="header-content">
+      <h1>🏀 NBA Stats Assistant</h1>
+      
+    </div>
+    <div class="header-actions">
+      <button class="debug-toggle" (click)="toggleDebugInfo()" title="Toggle Debug Info">
+        {{ showDebugInfo ? '🔍 Hide Debug' : '🔍 Show Debug' }}
+      </button>
+      <div class="server-status" [title]="serverStatus">
+        <span class="status-indicator" [ngClass]="serverStatus"></span>
+        <span class="status-text">{{ 
+          serverStatus === 'connected' ? 'Connected' : 
+          serverStatus === 'disconnected' ? 'Disconnected' : 
+          'Checking...' 
+        }}</span>
+      </div>
     </div>
   </header>
 
   <div class="main-content">
-    <div class="sidebar">
-      <div class="sidebar-section">
-        <h3>📝 Sample Questions</h3>
-        <div class="sample-questions">
-          <button 
-            *ngFor="let question of sampleQuestions" 
-            class="sample-question-btn"
-            (click)="useSampleQuestion(question)"
-            [disabled]="isProcessing">
-            {{ question }}
-          </button>
+    <div class="sidebar" [class.collapsed]="false">
+      <div class="sidebar-header">
+        <h3>💡 Sample Questions</h3>
+      </div>
+      
+      <div class="sidebar-content">
+        <div *ngFor="let category of sampleQuestions" class="question-category">
+          <h4>{{ category.category }}</h4>
+          <div class="sample-questions">
+            <button 
+              *ngFor="let question of category.questions" 
+              class="sample-question-btn"
+              (click)="useSampleQuestion(question)"
+              [disabled]="isProcessing"
+              [title]="question">
+              {{ question }}
+            </button>
+          </div>
         </div>
       </div>
-      <div class="sidebar-section">
+
+      <div class="sidebar-footer">
         <button class="clear-btn" (click)="clearChat()" [disabled]="isProcessing">
           🗑️ Clear Chat
         </button>
@@ -30,20 +50,34 @@
 
     <div class="chat-container">
       <div class="messages" #messagesContainer>
-        <div *ngFor="let msg of messages" class="message-wrapper" [ngClass]="msg.sender">
-          <div class="message" [ngClass]="{'loading': msg.isLoading}">
+        <div *ngFor="let msg of messages; let i = index" 
+             class="message-wrapper" 
+             [ngClass]="msg.sender"
+             [@fadeIn]>
+          <div class="message" 
+               [ngClass]="{
+                 'loading': msg.isLoading,
+                 'error': msg.error
+               }">
             <div class="message-header">
               <span class="sender-icon">{{ msg.sender === 'user' ? '👤' : '🤖' }}</span>
+              <span class="sender-name">{{ msg.sender === 'user' ? 'You' : 'Assistant' }}</span>
               <span class="timestamp">{{ msg.timestamp | date:'short' }}</span>
             </div>
+            
             <div class="message-content">
-              <p>{{ msg.text }}</p>
+              <p class="message-text">{{ msg.text }}</p>
               
               <!-- Structured data display -->
               <div *ngIf="hasStructuredData(msg)" class="structured-data">
                 <details>
-                  <summary>View Structured Data</summary>
-                  <pre>{{ formatStructuredData(msg.structured_data) }}</pre>
+                  <summary>📋 View Structured Data</summary>
+                  <div class="data-content">
+                    <pre>{{ formatStructuredData(msg.structured_data) }}</pre>
+                    <button class="copy-btn" (click)="copyToClipboard(formatStructuredData(msg.structured_data))">
+                      📋 Copy
+                    </button>
+                  </div>
                 </details>
               </div>
 
@@ -54,21 +88,48 @@
                   {{ ev.table }} (ID: {{ ev.id }})
                 </span>
               </div>
+
+              <!-- Debug info display -->
+              <div *ngIf="showDebugInfo && hasDebugInfo(msg)" class="debug-info">
+                <details>
+                  <summary>🔧 Debug Information</summary>
+                  <div class="debug-content">
+                    <pre>{{ formatStructuredData(msg.debug_info) }}</pre>
+                  </div>
+                </details>
+              </div>
             </div>
           </div>
+        </div>
+
+        <!-- Empty state -->
+        <div *ngIf="messages.length === 0" class="empty-state">
+          <div class="empty-icon">🏀</div>
+          <p>No messages yet. Start by asking a question!</p>
         </div>
       </div>
 
       <form (ngSubmit)="sendMessage()" class="input-area">
-        <input 
-          [(ngModel)]="userInput" 
-          name="userInput" 
-          placeholder="Ask about NBA games, players, scores..." 
-          [disabled]="isProcessing"
-          autocomplete="off" />
-        <button type="submit" [disabled]="isProcessing || !userInput.trim()">
-          {{ isProcessing ? '⏳' : '📤' }} Send
-        </button>
+        <div class="input-wrapper">
+          <textarea
+            [(ngModel)]="userInput" 
+            name="userInput" 
+            placeholder="Ask about NBA games, players, scores, special dates..."
+            [disabled]="isProcessing"
+            (keypress)="handleKeyPress($event)"
+            rows="1"
+            autocomplete="off"></textarea>
+          <button type="submit" 
+                  class="send-btn"
+                  [disabled]="isProcessing || !userInput.trim()"
+                  [title]="isProcessing ? 'Processing...' : 'Send message (Enter)' ">
+            <span *ngIf="!isProcessing">📤</span>
+            <span *ngIf="isProcessing" class="spinner">⏳</span>
+          </button>
+        </div>
+        <div class="input-hint">
+          Press Enter to send • Shift+Enter for new line
+        </div>
       </form>
     </div>
   </div>

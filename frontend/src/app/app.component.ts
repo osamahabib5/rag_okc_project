@@ -7,7 +7,9 @@ interface Message {
   timestamp: Date;
   structured_data?: any;
   evidence?: Array<{ table: string; id: number }>;
+  debug_info?: any;
   isLoading?: boolean;
+  error?: boolean;
 }
 
 @Component({
@@ -18,20 +20,40 @@ interface Message {
 export class AppComponent implements OnInit, AfterViewChecked {
   @ViewChild('messagesContainer') private messagesContainer!: ElementRef;
   
-  title = 'AI Engineering Sandbox';
+  title = 'NBA Stats Assistant';
   messages: Message[] = [];
   userInput = '';
   isProcessing = false;
   serverStatus: 'connected' | 'disconnected' | 'checking' = 'checking';
   private shouldScroll = false;
+  showDebugInfo = false;
 
-  // Sample questions for quick access
+  // Sample questions organized by category
   sampleQuestions = [
-    "How many points did the Warriors score against the Sacramento Kings on October 27, 2023?",
-    "Who was the leading scorer in the 2023 Christmas Day game between the Los Angeles Lakers and Boston Celtics?",
-    "Which team won the 2024 New Year's Eve game between the Thunder and Timberwolves?",
-    "How many points did LeBron James score in the LA Lakers' 140-132 victory over the Rockets on January 16, 2023?",
-    "Which player had 40 points on 4/9 in the 2023 NBA Season?"
+    {
+      category: 'Game Scores',
+      questions: [
+        "How many points did the Warriors score against the Sacramento Kings on October 27, 2023?",
+        "What was the final score of the game between the Mavericks and Hawks on 1-26-24?",
+        "Which team won the 2024 New Year's Eve game between the Thunder and Timberwolves?"
+      ]
+    },
+    {
+      category: 'Player Performance',
+      questions: [
+        "Who was the leading scorer in the 2023 Christmas Day game between the Los Angeles Lakers and Boston Celtics?",
+        "How many points did LeBron James score in the LA Lakers' 140-132 victory over the Rockets on January 16, 2023?",
+        "Which player had 40 points on 4/9 in the 2023 NBA Season?",
+        "How many rebounds did Victor Wembanyama have in his NBA debut?"
+      ]
+    },
+    {
+      category: 'Special Dates',
+      questions: [
+        "What were the results of Christmas Day 2023 NBA games?",
+        "Who scored the most points on New Year's Day 2024?"
+      ]
+    }
   ];
 
   constructor(private chatService: ChatService) {}
@@ -39,6 +61,9 @@ export class AppComponent implements OnInit, AfterViewChecked {
   ngOnInit(): void {
     this.checkServerHealth();
     this.addWelcomeMessage();
+    
+    // Check health periodically
+    setInterval(() => this.checkServerHealth(), 30000);
   }
 
   ngAfterViewChecked(): void {
@@ -52,10 +77,12 @@ export class AppComponent implements OnInit, AfterViewChecked {
     this.serverStatus = 'checking';
     this.chatService.checkHealth().subscribe({
       next: (response) => {
-        if (response.status === 'healthy') {
-          this.serverStatus = 'connected';
-        } else {
-          this.serverStatus = 'disconnected';
+        this.serverStatus = response.status === 'healthy' ? 'connected' : 'disconnected';
+        
+        // Update welcome message with stats if first check
+        if (this.messages.length === 1 && response.stats) {
+          const statsMessage = `\n\n📊 Database contains:\n• ${response.stats.games.toLocaleString()} games\n• ${response.stats.player_performances.toLocaleString()} player performances`;
+          this.messages[0].text += statsMessage;
         }
       },
       error: () => {
@@ -67,7 +94,7 @@ export class AppComponent implements OnInit, AfterViewChecked {
   addWelcomeMessage(): void {
     this.messages.push({
       sender: 'bot',
-      text: 'Welcome! I\'m your NBA Stats assistant. Ask me anything about NBA games from the 2023-24 and 2024-25 seasons!',
+      text: '🏀 Welcome to the NBA Stats Assistant!\n\nI can help you find information about NBA games from the 2023-24 and 2024-25 seasons.\n\nTry asking about:\n• Game scores and results\n• Player performances\n• Special date games (Christmas, New Year\'s, etc.)\n\nSelect a sample question or type your own!',
       timestamp: new Date()
     });
     this.shouldScroll = true;
@@ -92,7 +119,7 @@ export class AppComponent implements OnInit, AfterViewChecked {
     // Add loading message
     const loadingMessage: Message = {
       sender: 'bot',
-      text: 'Thinking...',
+      text: '🔍 Searching database...',
       timestamp: new Date(),
       isLoading: true
     };
@@ -111,7 +138,8 @@ export class AppComponent implements OnInit, AfterViewChecked {
           text: response.answer || 'No answer received.',
           timestamp: new Date(),
           structured_data: response.structured_result,
-          evidence: response.evidence
+          evidence: response.evidence,
+          debug_info: response.debug_info
         });
         this.isProcessing = false;
         this.shouldScroll = true;
@@ -120,10 +148,13 @@ export class AppComponent implements OnInit, AfterViewChecked {
         // Remove loading message
         this.messages = this.messages.filter(m => !m.isLoading);
 
+        const errorMessage = error.error?.detail || 'Failed to contact server. Please ensure the backend is running on http://localhost:8000';
+        
         this.messages.push({
           sender: 'bot',
-          text: `Error: ${error.error?.detail || 'Failed to contact server. Please make sure the backend is running.'}`,
-          timestamp: new Date()
+          text: `❌ Error: ${errorMessage}`,
+          timestamp: new Date(),
+          error: true
         });
         this.isProcessing = false;
         this.shouldScroll = true;
@@ -141,11 +172,15 @@ export class AppComponent implements OnInit, AfterViewChecked {
     this.addWelcomeMessage();
   }
 
+  toggleDebugInfo(): void {
+    this.showDebugInfo = !this.showDebugInfo;
+  }
+
   private scrollToBottom(): void {
     try {
       if (this.messagesContainer) {
-        this.messagesContainer.nativeElement.scrollTop = 
-          this.messagesContainer.nativeElement.scrollHeight;
+        const element = this.messagesContainer.nativeElement;
+        element.scrollTop = element.scrollHeight;
       }
     } catch (err) {
       console.error('Scroll error:', err);
@@ -159,5 +194,22 @@ export class AppComponent implements OnInit, AfterViewChecked {
 
   hasStructuredData(msg: Message): boolean {
     return !!(msg.structured_data && Object.keys(msg.structured_data).length > 0);
+  }
+
+  hasDebugInfo(msg: Message): boolean {
+    return !!(msg.debug_info && Object.keys(msg.debug_info).length > 0);
+  }
+
+  copyToClipboard(text: string): void {
+    navigator.clipboard.writeText(text).then(() => {
+      console.log('Copied to clipboard');
+    });
+  }
+
+  handleKeyPress(event: KeyboardEvent): void {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      this.sendMessage();
+    }
   }
 }

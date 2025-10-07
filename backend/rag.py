@@ -231,7 +231,7 @@ def extract_player_name(question):
                 # Exclude team names and special days
                 exclude_terms = ['Golden State', 'Los Angeles', 'San Antonio', 'Oklahoma City', 'New Orleans', 
                                'Sacramento Kings', 'Boston Celtics', 'Dallas Mavericks', 'Christmas Day', 
-                               'New Year', 'Boxing Day', 'NBA Season']
+                               'New Year', 'Boxing Day', 'NBA Season', 'Atlanta Hawks']
                 if potential_name not in exclude_terms:
                     return potential_name
     
@@ -239,18 +239,73 @@ def extract_player_name(question):
 
 
 def determine_query_type(question):
-    """Determine if question is about player stats or game details based on first words"""
+    """
+    Determine if question is about player stats or game details.
+    Now checks for cues ANYWHERE in the sentence, not just at the beginning.
+    """
     question_lower = question.lower()
     
-    # Get first 6 words for analysis
+    # Get first 6 words for analysis (still useful for quick patterns)
     words = question_lower.split()
     first_six = ' '.join(words[:6]) if len(words) >= 6 else question_lower
     
+    print(f"Analyzing question: '{question}'")
     print(f"First 6 words: '{first_six}'")
     
-    # CRITICAL: Check first words for definitive patterns
+    # PRIORITY 1: Check for specific player names ANYWHERE in the question
+    player_full_names = [
+        'lebron james', 'luka dončić', 'luka doncic', 'victor wembanyama',
+        'nikola jokic', 'nikola jokić', 'shai gilgeous-alexander', 'stephen curry',
+        'kevin durant', 'anthony davis', 'giannis antetokounmpo',
+        'kristaps porzingis', 'kristaps porziņģis'
+    ]
     
-    # Game/Team patterns at the start
+    for name in player_full_names:
+        if name in question_lower:
+            print(f"Found player name '{name}' - PLAYER query")
+            return 'player'
+    
+    # PRIORITY 2: Check for player-specific question patterns ANYWHERE
+    player_question_patterns = [
+        r'how many points did ([a-z]+\s+[a-z]+)',
+        r'how many rebounds did ([a-z]+\s+[a-z]+)',
+        r'how many assists did ([a-z]+\s+[a-z]+)',
+        r'did ([a-z]+\s+[a-z]+) score',
+        r'did ([a-z]+\s+[a-z]+) have',
+    ]
+    
+    for pattern in player_question_patterns:
+        match = re.search(pattern, question_lower)
+        if match:
+            name_candidate = match.group(1)
+            # Check if it's not a team name
+            team_keywords = ['warriors', 'lakers', 'mavericks', 'hawks', 'kings', 'celtics', 
+                           'spurs', 'nuggets', 'thunder', 'rockets', 'heat', 'suns']
+            if not any(team in name_candidate for team in team_keywords):
+                print(f"Found player question pattern with '{name_candidate}' - PLAYER query")
+                return 'player'
+    
+    # PRIORITY 3: Strong player indicators ANYWHERE in the question
+    strong_player_indicators = [
+        'leading scorer',
+        'triple-double',
+        'his nba debut',
+        'his debut',
+        'debut',
+        'his performance',
+        'player recorded',
+        'player had',
+        'which player',
+        'who was the',
+        'who had'
+    ]
+    
+    for indicator in strong_player_indicators:
+        if indicator in question_lower:
+            print(f"Found player indicator '{indicator}' - PLAYER query")
+            return 'player'
+    
+    # PRIORITY 4: Game/Team patterns at the start (original logic)
     game_starters = [
         'which team won',
         'which team',
@@ -264,77 +319,23 @@ def determine_query_type(question):
     
     for starter in game_starters:
         if first_six.startswith(starter):
-            # Exception: if followed by a known player name, it's a player query
-            player_names_lower = ['lebron', 'luka', 'victor', 'nikola', 'shai', 'stephen', 'kevin', 'giannis']
-            if not any(name in question_lower for name in player_names_lower):
-                return 'game'
+            print(f"Found game starter '{starter}' - GAME query")
+            return 'game'
     
-    # Player patterns at the start
-    player_starters = [
-        'who was the leading',
-        'who was',
-        'who had',
-        'which player',
-        'how many points did lebron',
-        'how many points did luka',
-        'how many points did victor',
-        'how many points did nikola',
-        'how many points did shai'
-    ]
-    
-    for starter in player_starters:
-        if first_six.startswith(starter):
-            return 'player'
-    
-    # Check if question starts with "How many points did [Name]"
-    how_many_pattern = r'^how many points did ([a-z]+)'
-    match = re.match(how_many_pattern, question_lower)
+    # PRIORITY 5: Check if asking about team score (with "the" before team name)
+    team_score_pattern = r'how many points did the ([a-z\s]+)'
+    match = re.search(team_score_pattern, question_lower)
     if match:
-        first_word_after = match.group(1)
-        
-        # Common first names of players
-        player_first_names = ['lebron', 'luka', 'victor', 'nikola', 'shai', 'stephen', 'kevin', 'giannis', 'anthony']
-        
-        # Team names/cities that could follow "the"
-        team_identifiers = ['warriors', 'lakers', 'nuggets', 'kings', 'celtics', 'heat', 'mavericks', 
-                           'thunder', 'spurs', 'rockets', 'hawks', 'suns', 'clippers']
-        
-        if first_word_after in player_first_names:
-            return 'player'
-        elif first_word_after == 'the':
-            # It's asking about a team (e.g., "How many points did the Warriors score")
-            return 'game'
-        elif first_word_after in team_identifiers:
+        team_candidate = match.group(1).strip()
+        team_names = [
+            'warriors', 'lakers', 'nuggets', 'kings', 'celtics', 'heat', 'mavericks', 
+            'thunder', 'spurs', 'rockets', 'hawks', 'suns', 'clippers'
+        ]
+        if any(team in team_candidate for team in team_names):
+            print(f"Found team score question - GAME query")
             return 'game'
     
-    # Strong player indicators anywhere in question
-    strong_player_indicators = [
-        'leading scorer',
-        'triple-double',
-        'his nba debut',
-        'his debut',
-        'debut',
-        'his performance',
-        'player recorded',
-        'player had'
-    ]
-    
-    for indicator in strong_player_indicators:
-        if indicator in question_lower:
-            return 'player'
-    
-    # Check for specific player names (full names)
-    player_full_names = [
-        'lebron james', 'luka dončić', 'luka doncic', 'victor wembanyama',
-        'nikola jokic', 'shai gilgeous-alexander', 'stephen curry',
-        'kevin durant', 'anthony davis', 'giannis antetokounmpo'
-    ]
-    
-    for name in player_full_names:
-        if name in question_lower:
-            return 'player'
-    
-    # Strong game indicators
+    # PRIORITY 6: Strong game indicators ANYWHERE
     strong_game_indicators = [
         'team won',
         'team score',
@@ -342,23 +343,37 @@ def determine_query_type(question):
         'what was the score',
         'game between',
         'victory over',
-        'win over'
+        'win over',
+        'which team'
     ]
     
     for indicator in strong_game_indicators:
         if indicator in question_lower:
+            print(f"Found game indicator '{indicator}' - GAME query")
             return 'game'
     
-    # Check for pattern "against the [Team]" - this is typically about teams unless player name is present
-    if 'against the' in question_lower or 'against' in question_lower:
-        # Check if a player name is explicitly mentioned
+    # PRIORITY 7: Check for score pattern (indicates game query unless player mentioned)
+    score_pattern = r'\d{2,3}-\d{2,3}'
+    if re.search(score_pattern, question):
+        # Score mentioned, but check if it's about a player's performance IN that game
         if extract_player_name(question):
+            print(f"Score mentioned but player name found - PLAYER query")
             return 'player'
         else:
-            # Likely asking about team vs team
+            print(f"Score mentioned, no player - GAME query")
             return 'game'
     
-    # Default to game when uncertain
+    # PRIORITY 8: Default - if we see "against" pattern with player context
+    if 'against' in question_lower or 'against the' in question_lower:
+        if extract_player_name(question):
+            print(f"'against' with player name - PLAYER query")
+            return 'player'
+        else:
+            print(f"'against' without player name - GAME query")
+            return 'game'
+    
+    # Final default
+    print(f"No clear pattern found - defaulting to GAME query")
     return 'game'
 
 
@@ -423,13 +438,13 @@ def extract_team_from_question(question):
         'grizzlies': ['grizzlies', 'memphis', 'mem']
     }
     
-    # Look for possessive form first (e.g., "OKC's victory")
-    possessive_pattern = r'([a-z]+)\'s\s+(?:victory|win)'
+    # Look for possessive form first (e.g., "Mavericks' 148-143 win")
+    possessive_pattern = r'([a-z]+)\'s?\s+(?:\d+-\d+\s+)?(?:victory|win)'
     match = re.search(possessive_pattern, question_lower)
     if match:
         team_abbr = match.group(1)
         for canonical_name, aliases in team_mappings.items():
-            if team_abbr in aliases:
+            if team_abbr in aliases or team_abbr in canonical_name:
                 return canonical_name
     
     # Try to find team mentioned after "did the" or "did"
@@ -452,15 +467,15 @@ def extract_team_from_question(question):
 
 
 def extract_opponent_team(question):
-    """Extract opponent team from question (e.g., 'against the Mavericks', 'over SAC')"""
+    """Extract opponent team from question (e.g., 'against the Mavericks', 'over the Hawks')"""
     question_lower = question.lower()
     
     # Pattern: "against the [Team]" or "vs [Team]" or "over [Team]"
     opponent_patterns = [
-        r'(?:victory|win)\s+over\s+([a-z]+)',
-        r'against (?:the\s+)?([a-z\s]+?)(?:\s+on|\s+in|\s+\d|$)',
-        r'vs\.?\s+(?:the\s+)?([a-z\s]+?)(?:\s+on|\s+in|\s+\d|$)',
-        r'v\.?\s+(?:the\s+)?([a-z\s]+?)(?:\s+on|\s+in|\s+\d|$)',
+        r'(?:victory|win)\s+over\s+(?:the\s+)?([a-z\s]+?)(?:\s+on|\s+\d|,)',
+        r'against (?:the\s+)?([a-z\s]+?)(?:\s+on|\s+in|\s+\d|,|$)',
+        r'vs\.?\s+(?:the\s+)?([a-z\s]+?)(?:\s+on|\s+in|\s+\d|,|$)',
+        r'v\.?\s+(?:the\s+)?([a-z\s]+?)(?:\s+on|\s+in|\s+\d|,|$)',
     ]
     
     for pattern in opponent_patterns:
@@ -476,7 +491,7 @@ def extract_opponent_team(question):
 
 
 def extract_score_from_question(question):
-    """Extract score from question (e.g., '144-110')"""
+    """Extract score from question (e.g., '148-143')"""
     score_pattern = r'(\d{2,3})-(\d{2,3})'
     match = re.search(score_pattern, question)
     if match:
@@ -606,7 +621,7 @@ def retrieve_games(cx, qvec, k=8):
     return cx.execute(text(sql), {"q": qvec, "k": k}).mappings().all()
 
 
-def retrieve_player_stats(cx, qvec, k=15):
+def retrieve_player_stats(cx, qvec, k=20):
     """Retrieve relevant player performances using vector similarity"""
     sql = """
     SELECT pbs.game_id, pbs.person_id, pbs.team_id,
@@ -1126,18 +1141,6 @@ Answer:"""
             rows = filter_by_dates(rows, special_dates)
             print(f"After date filter: {len(rows)} rows")
         
-        # CRITICAL: Filter by exact points FIRST if specified
-        if exact_points is not None:
-            rows = filter_by_exact_points(rows, exact_points)
-            print(f"After exact points filter ({exact_points}): {len(rows)} rows")
-            
-            # If no one scored exactly that many points, return empty
-            if not rows:
-                print(f"❌ No player scored exactly {exact_points} points on the specified date")
-                template = get_template_for_question(question_id)
-                template['evidence'] = [{"table": "player_box_score", "id": 0}]
-                return template, [], f"No player scored exactly {exact_points} points on the specified date."
-        
         # Filter by matchup (both teams must be in the game)
         if all_teams and len(all_teams) >= 2:
             rows = filter_by_matchup(rows, all_teams)
@@ -1159,6 +1162,18 @@ Answer:"""
         if player_name:
             rows = filter_by_player(rows, player_name)
             print(f"After player filter: {len(rows)} rows")
+        
+        # CRITICAL: Filter by exact points if specified (for questions like "40 points on 4/9")
+        if exact_points is not None:
+            rows = filter_by_exact_points(rows, exact_points)
+            print(f"After exact points filter ({exact_points}): {len(rows)} rows")
+            
+            # If no one scored exactly that many points, return empty
+            if not rows:
+                print(f"❌ No player scored exactly {exact_points} points on the specified date")
+                template = get_template_for_question(question_id)
+                template['evidence'] = [{"table": "player_box_score", "id": 0}]
+                return template, [], f"No player scored exactly {exact_points} points on the specified date."
         
         if opponent_team and not all_teams:
             rows = filter_by_opponent(rows, opponent_team)
