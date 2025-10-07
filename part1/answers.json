@@ -1,0 +1,137 @@
+[
+  {
+    "id": 1,
+    "result": {
+      "points": 122,
+      "winner": "Golden State Warriors",
+      "score": "114-122",
+      "evidence": [
+        {
+          "table": "game_details",
+          "id": 22300087
+        }
+      ]
+    }
+  },
+  {
+    "id": 2,
+    "result": {
+      "points": 113,
+      "winner": "Oklahoma City Thunder",
+      "score": "113-105",
+      "evidence": [
+        {
+          "table": "game_details",
+          "id": 22400452
+        }
+      ]
+    }
+  },
+  {
+    "id": 3,
+    "result": {
+      "points": 114,
+      "winner": "Denver Nuggets",
+      "score": "120-114",
+      "evidence": [
+        {
+          "table": "game_details",
+          "id": 22300402
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "result": {
+      "player_name": "Anthony Davis",
+      "points": 40,
+      "evidence": [
+        {
+          "table": "player_box_score",
+          "id": 22300403
+        }
+      ]
+    }
+  },
+  {
+    "id": 5,
+    "result": {
+      "player_name": "Luka Dončić",
+      "points": 73,
+      "evidence": [
+        {
+          "table": "player_box_score",
+          "id": 22300634
+        }
+      ]
+    }
+  },
+  {
+    "id": 6,
+    "result": {
+      "player_name": "Nikola Jokić",
+      "points": 36,
+      "rebounds": 22,
+      "assists": 11,
+      "evidence": [
+        {
+          "table": "player_box_score",
+          "id": 22400445
+        }
+      ]
+    }
+  },
+  {
+    "id": 7,
+    "result": {
+      "player_name": "",
+      "points": 0,
+      "evidence": [
+        {
+          "table": "player_box_score",
+          "id": 0
+        }
+      ]
+    }
+  },
+  {
+    "id": 8,
+    "result": {
+      "player_name": "",
+      "points": 0,
+      "evidence": [
+        {
+          "table": "player_box_score",
+          "id": 0
+        }
+      ]
+    }
+  },
+  {
+    "id": 9,
+    "result": {
+      "player_name": "Victor Wembanyama",
+      "points": 15,
+      "evidence": [
+        {
+          "table": "player_box_score",
+          "id": 22300073
+        }
+      ]
+    }
+  },
+  {
+    "id": 10,
+    "result": {
+      "player_name": "",
+      "points": 0,
+      "evidence": [
+        {
+          "table": "player_box_score",
+          "id": 0
+        }
+      ]
+    }
+  }
+]
