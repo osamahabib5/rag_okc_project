@@ -1,0 +1,778 @@
+Model used for all queries: claude-sonnet-4-5-20250929
+
+Prompt 1
+
+game_details:
+
+game_id
+season
+game_timestamp
+home_team_id
+away_team_id
+home_points
+away_points
+winning_team_id
+
+
+player_id
+
+player_id
+team_id
+first_name
+last_name
+birth_date
+height
+weight
+position
+draft_year
+season_exp
+
+teams:
+
+team_id
+city
+name
+abbreviation
+conference
+division
+
+player_box_scores
+
+game_id
+person_id
+team_id
+starter
+seconds
+points
+fg2_made
+fg2_attempted
+fg3_made
+fg3_attempted
+ft_attempted
+ft_made
+offensive_reb
+defensive_reb
+assists
+steals
+blocks
+turnovers
+defensive_fouls
+offensive_fouls
+
+Given above are four tables. Make a schema diagram for these tables which would help me retrieve stat questions about the NBA stats for 23-24 and 24-25 seasons
+
+Prompt 2
+
+ingest.py
+
+Load data – Ingest CSVs related to NBA game information from the 2023-24 and 2024-25 seasons into PostgresSQL tables. Note this data is limited to only matchups involving at least one Western Conference team for size considerations
+
+import os
+import pandas as pd
+import sqlalchemy as sa
+from sqlalchemy import text
+from pathlib import Path
+from backend.config import DB_DSN
+
+TABLES = ["game_details", "player_box_scores", "players", "teams"]
+DATA_DIR = Path(__file__).resolve().parent / "data"
+
+def main():
+    print('Starting Database Ingestion')
+    eng = sa.create_engine(DB_DSN)
+    with eng.begin() as cx:
+        # Ensure pgvector extension is available for the `vector` type used to store embeddings
+        cx.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        for t in TABLES:
+            path = os.path.join(DATA_DIR, f"{t}.csv")
+            df = pd.read_csv(path)
+            df.to_sql(t, cx, if_exists="replace", index=False, method="multi", chunksize=5000)
+    print('Finished Database Ingestion')
+
+
+if __name__ == "__main__":
+    main()
+
+embed.py
+
+Create embeddings – Generate text embeddings with Ollama nomic-embed-text and store them alongside the source rows.
+
+
+import pandas as pd
+import sqlalchemy as sa
+from sqlalchemy import text
+from backend.config import DB_DSN, EMBED_MODEL
+from backend.utils import ollama_embed
+
+# Example of a row embedding for the game_details table
+# TODO: Customize this
+def row_text(r):
+    ts = pd.to_datetime(r.game_timestamp, utc=True)
+    date = ts.strftime('%Y-%m-%d')
+    home = int(r.home_team_id)
+    away = int(r.away_team_id)
+    hp = int(r.home_points)
+    ap = int(r.away_points)
+
+    return (
+        "game | "
+        f"season:{int(r.season)} | "
+        f"date:{date} | "
+        f"home_team_id:{home} | "
+        f"away_team_id:{away} | "
+        f"home_points:{hp} | "
+        f"away_points:{ap} | "
+    )
+
+
+def main():
+    print("Starting Embedding Process")
+    eng = sa.create_engine(DB_DSN)
+    with eng.begin() as cx:
+        cx.execute(text('ALTER DATABASE nba REFRESH COLLATION VERSION'))
+        # TODO: Try with different embeddings, feel free to try different index type/distance functions as well
+        cx.execute(text("ALTER TABLE IF EXISTS game_details ADD COLUMN IF NOT EXISTS embedding vector(768);"))
+        cx.execute(text("CREATE INDEX IF NOT EXISTS idx_game_details_embedding ON game_details USING hnsw (embedding vector_cosine_ops);"))
+        df = pd.read_sql(
+            "SELECT game_id, season, game_timestamp, home_team_id, away_team_id, home_points, away_points FROM game_details ORDER BY game_timestamp DESC, game_id DESC",
+            cx,
+        )
+        for _, r in df.iterrows():
+            vec = ollama_embed(EMBED_MODEL, row_text(r))
+            cx.execute(text("UPDATE game_details SET embedding = :v WHERE game_id = :gid"), {"v": vec, "gid": int(r.game_id)})
+    print(f"Finished Embeddings: {len(df)} Rows Updated")
+
+
+if __name__ == "__main__":
+    main()
+
+rag.py
+
+Retrieve and join – Perform semantic retrieval using the pgvector extension to find relevant game summaries, then join the matched embeddings back to the original structured table rows to provide factual context. and then answer questions – Use Llama llama3.2:3b to produce answers grounded on the retrieved data to the questions in questions. json. 
+
+import os
+import json
+import sqlalchemy as sa
+from sqlalchemy import text
+from backend.config import DB_DSN, EMBED_MODEL, LLM_MODEL
+from backend.utils import ollama_embed, ollama_generate
+
+BASE_DIR = os.path.dirname(__file__)
+QUESTIONS_PATH = os.path.normpath(os.path.join(BASE_DIR, "..", "part1", "questions.json"))
+ANSWERS_PATH = os.path.normpath(os.path.join(BASE_DIR, "..", "part1", "answers.json"))
+TEMPLATE_PATH = os.path.normpath(os.path.join(BASE_DIR, "..", "part1", "answers_template.json"))
+
+
+def retrieve(cx, qvec, k=5):
+    sql = (
+       "SELECT game_id, game_timestamp, home_team_id, away_team_id, home_points, away_points, "
+        "1 - (embedding <=> (:q)::vector) AS score FROM game_details ORDER BY embedding <-> (:q)::vector LIMIT :k"
+    )
+    return cx.execute(text(sql), {"q": qvec, "k": k}).mappings().all()
+
+
+def build_context(rows):
+    return "\n".join(
+        [
+            f"{r['game_id']} {r['game_timestamp']} {r['home_team_id']} vs {r['away_team_id']} {r['home_points']}-{r['away_points']}"
+            for r in rows
+        ]
+    )
+
+
+# Feel free to edit this prompt, but ensure it still uses context directly from the embeddings
+def answer(question, rows):
+    # Use answers template in the response
+    with open(TEMPLATE_PATH, encoding="utf-8") as f:
+        answers_template = json.load(f)
+    ctx = build_context(rows)
+    prompt = (
+        f"Use this format to answer the questions:\n{json.dumps(answers_template)}\n"
+        f"Answer using only this context. Cite game_ids used.\n"
+        f"Context:\n{ctx}\n\nQ: {question}\nA:"
+    )
+    return ollama_generate(LLM_MODEL, prompt)
+
+
+if __name__ == "__main__":
+    eng = sa.create_engine(DB_DSN)
+    with open(QUESTIONS_PATH, encoding="utf-8") as f:
+        qs = json.load(f)
+    outs = []
+    with eng.begin() as cx:
+        for q in qs:
+            qvec = ollama_embed(EMBED_MODEL, q["question"])
+            rows = retrieve(cx, qvec, 5)
+            ans = answer(q["question"], rows)
+            outs.append({
+                "answer": ans,
+                "evidence": [{"table": "game_details", "id": int(r["game_id"])} for r in rows],
+            })
+    with open(ANSWERS_PATH, "w", encoding="utf-8") as f:
+        json.dump(outs, f, ensure_ascii=False, indent=2)
+
+questions. json
+
+[
+  {
+    "id": 1,
+    "question": "How many points did the Warriors score against the Sacramento Kings on October 27, 2023?",
+    "return": {
+      "points": "int",
+      "evidence": [
+        {
+          "table": "game_details",
+          "id": "int"
+        }
+      ]
+    }
+  },
+  {
+    "id": 2,
+    "question": "Which team won the 2024 New Year's Eve game between the Thunder and Timberwolves, and what was the final score?",
+    "return": {
+      "winner": "str",
+      "score": "str",
+      "evidence": [
+        {
+          "table": "game_details",
+          "id": "int"
+        }
+      ]
+    }
+  },
+  {
+    "id": 3,
+    "question": "Which team won the 2023 Christmas Day game between Golden State and Denver, and what was the final score?",
+    "return": {
+      "winner": "str",
+      "score": "str",
+      "evidence": [
+        {
+          "table": "game_details",
+          "id": "int"
+        }
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "question": "Who was the leading scorer in the 2023 Christmas Day game between the Los Angeles Lakers and Boston Celtics, and how many points did he score?",
+    "return": {
+      "player_name": "str",
+      "points": "int",
+      "evidence": [
+        {
+          "table": "player_box_score",
+          "id": "int"
+        }
+      ]
+    }
+  },
+  {
+    "id": 5,
+    "question": "How many points did Luka Dončić score in the Dallas Mavericks' 148-143 win over the Atlanta Hawks on 1-26-24?",
+    "return": {
+      "player_name": "str",
+      "points": "int",
+      "evidence": [
+        {
+          "table": "player_box_score",
+          "id": "int"
+        }
+      ]
+    }
+  },
+  {
+    "id": 6,
+    "question": "Which player recorded a triple-double in the Denver Nuggets' 132-121 win over the Utah Jazz on December 30, 2024, and what were his points, rebounds, and assists?",
+    "return": {
+      "player_name": "str",
+      "points": "int",
+      "rebounds": "int",
+      "assists": "int",
+      "evidence": [
+        {
+          "table": "player_box_score",
+          "id": "int"
+        }
+      ]
+    }
+  },
+  {
+    "id": 7,
+    "question": "How many points did LeBron James score in the LA Lakers' 140-132 victory over the Rockets on January 16, 2023?",
+    "return": {
+      "player_name": "str",
+      "points": "int",
+      "evidence": [
+        {
+          "table": "player_box_score",
+          "id": "int"
+        }
+      ]
+    }
+  },
+  {
+    "id": 8,
+    "question": "Who was the leading scorer in OKC's 144-110 victory over SAC on 2/1/2024, and how many points did he score?",
+    "return": {
+      "player_name": "str",
+      "points": "int",
+      "evidence": [
+        {
+          "table": "player_box_score",
+          "id": "int"
+        }
+      ]
+    }
+  },
+  {
+    "id": 9,
+    "question": "How many points did Victor Wembanyama score in his NBA debut against the Dallas Mavericks on October 25, 2023?",
+    "return": {
+      "player_name": "str",
+      "points": "int",
+      "evidence": [
+        {
+          "table": "player_box_score",
+          "id": "int"
+        }
+      ]
+    }
+  },
+  {
+    "id": 10,
+    "question": "Which player had 40 points on 4/9 in the 2023 NBA Season?",
+    "return": {
+      "player_name": "str",
+      "points": "int",
+      "evidence": [
+        {
+          "table": "player_box_score",
+          "id": "int"
+        }
+      ]
+    }
+  }
+]
+
+answer_template.json
+
+[
+    {"id":1,"result":{"points":0,"evidence":[{"table":"game_details","id":0}]}},
+    {"id":2,"result":{"winner":"","score":"","evidence":[{"table":"game_details","id":0}]}},
+    {"id":3,"result":{"winner":"","score":"","evidence":[{"table":"game_details","id":0}]}},
+    {"id":4,"result":{"player_name":"","points":0,"evidence":[{"table":"player_box_score","id":0}]}},
+    {"id":5,"result":{"player_name":"","points":0,"evidence":[{"table":"player_box_score","id":0}]}},
+    {"id":6,"result":{"player_name":"","points":0,"rebounds":0,"assists":0,"evidence":[{"table":"player_box_score","id":0}]}},
+    {"id":7,"result":{"player_name":"","points":0,"evidence":[{"table":"player_box_score","id":0}]}},
+    {"id":8,"result":{"player_name":"","points":0,"evidence":[{"table":"player_box_score","id":0}]}},
+    {"id":9,"result":{"player_name":"","points":0,"evidence":[{"table":"player_box_score","id":0}]}},
+    {"id":10,"result":{"player_name":"","points":0,"evidence":[{"table":"player_box_score","id":0}]}}
+]
+
+Using the schema created above, make changes in ingest.py, embed.py and rag.py to answer questions given in question.json. The data for all the tables are in csv files with the same names as the table given. Each question has a corresponding answer template which is provided in answer_template.json. Also, make sure that the following rules are taken care of:
+
+1. The code should be able to distinguish if it's a player or a team whose stats are needed.
+2. The code should be able to distinguish between the home and away teams.
+3. The code should be able to understand date based on keywords like Christmas Eve, New Years Eve, Boxing Day etc.
+4. The code should understand if the player is a starter or came off the bench 
+5. The code should be able to understand the difference between field goals attempted and field goals made. Furthermore, for clarification, these are small meanings of the columns in player box scores table:
+
+game_id - Unique identifier for each game
+person_id - Unique identifier for each player
+team_id - Unique identifier for each team
+starter - Whether player was in starting lineup (1=yes, 0=no)
+seconds - Total playing time in seconds
+points - Total points scored
+fg2_made - 2-point field goals made
+fg2_attempted - 2-point field goals attempted
+fg3_made - 3-point field goals made
+fg3_attempted - 3-point field goals attempted
+ft_attempted - Free throws attempted
+ft_made - Free throws made
+offensive_reb - Offensive rebounds (grabbing missed shots by own team)
+defensive_reb - Defensive rebounds (grabbing missed shots by opponent)
+assists - Passes leading directly to teammate's made basket
+steals - Taking possession from opponent
+blocks - Deflecting opponent's shot attempt
+turnovers - Losing possession (mistakes, violations)
+defensive_fouls - Fouls committed while defending
+offensive_fouls - Fouls committed while on offense (e.g., charging)
+
+6. For any missing values, replace the discrete numeric or non-numeric values with mode and continuous numeric values with median
+
+Prompt 3
+
+Getting this error in rag.py file
+
+Starting RAG Question Answering
+
+Processing Question 1: How many points did the Warriors score against the Sacramento Kings on October 27, 2023?
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/app/backend/rag.py", line 241, in <module>
+    main()
+  File "/app/backend/rag.py", line 224, in main
+    result, rows = answer_question(q['question'], q['id'], cx)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/backend/rag.py", line 176, in answer_question
+    ctx = build_player_context(rows)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    date = ts.strftime('%Y-%m-%d')
+           ^^^^^^^^^^^
+AttributeError: 'str' object has no attribute 'strftime'
+
+
+habib@Osama_Bin_Habib MINGW64 /d/applied-ai-engineer-intern-technical-project-deadline-10-7-osamahabib5 (main)
+$
+
+
+
+    date = ts.strftime('%Y-%m-%d')
+           ^^^^^^^^^^^
+AttributeError: 'str' object has no attribute 'strftime'
+
+    date = ts.strftime('%Y-%m-%d')
+    date = ts.strftime('%Y-%m-%d')
+    date = ts.strftime('%Y-%m-%d')
+           ^^^^^^^^^^^
+AttributeError: 'str' object has no attribute 'strftime'
+
+Fix it and share the entire code file
+
+Prompt 4
+
+In rag.py file, change the logic to determine query_type player or team, since the model is not answering the questions correctly. It's returning player stats in question where team stats are being asked. Return the whole code
+
+Prompt 5
+
+The model is still not able to make the distinction between home and away teams. Please correct this part in the code as well
+
+Prompt 6
+
+If the information is not available for the question asked, for that particular  question, return the answer in answer.json file in the same format as answers_template.json file. like if answer for question 7 is not available, see what format is given in answer_template.json file and write it as it is in answers.json file. Also, make changes to the code so that it determines and extract the correct information in terms of who were the home and away teams and if home team was the winner or away one.
+
+Prompt 7
+
+Make sure the code is also able to map special days to date like Christmas Day 2023 to 12/25/2023, New Year's Eve 2024 to  12/31/2024 and other. Make edits in this code 
+
+Prompt 8
+
+Make changes to the code so that individual player stats could also be retrieved in the pipeline like triple double for a player if asked in the query. Also, make the pipeline efficient so that the LLM gives the answer quickly, and make sure to also identify the other team using information from the query if it's not expilcitly given in the question like How many points did Victor Wembanyama score in his NBA debut against the Dallas Mavericks on October 25, 2023. In this, the code should be able to determine which team the player was playing against using team name and date. 
+
+Prompt 9
+
+The code is still not able to identify the type correctly, like for this question, How many points did the Warriors score against the Sacramento Kings on October 27, 2023, it gave this answer Player: Sacramento Kings
+Opponent: kings
+Even though question was asked for a team. Make changes to the code and fix this
+
+Use the first 5-6 words to make this determination. like in this question
+
+Which team won the 2023 Christmas Day gam
+
+the question is about a team, 
+
+but in this question, 
+Who was the leading scorer in the 2023 Christmas Day game between the Los Angeles Lakers and Boston Celtics
+
+The question is about a player
+
+Prompt 10
+
+When answering questions for players, replace points: 0 with the actual points that were scored by that player. Like in example given below, replace       "points": 0 with the actual points that were scored by that player. 
+
+{
+    "id": 4,
+    "result": {
+      "player_name": "Anthony Davis",
+      "points": 0,
+      "evidence": [
+        {
+          "table": "player_box_score",
+          "id": 22300403
+        }
+      ]
+    }
+  }
+
+If the player scored 13 points the answer should be:
+
+{
+    "id": 4,
+    "result": {
+      "player_name": "Anthony Davis",
+      "points": 13,
+      "evidence": [
+        {
+          "table": "player_box_score",
+          "id": 22300403
+        }
+      ]
+    }
+  }
+
+Prompt 11
+
+There is still some discrepancy in the answers produced like in the following question:
+
+================================================================================     
+Q4: Who was the leading scorer in the 2023 Christmas Day game between the Los Angeles Lakers and Boston Celtics, and how many points did he score?
+
+
+The answer is ================================================================================     
+First 6 words: 'who was the leading scorer in'
+Query type: player
+Dates: ['2023-12-25', '2023-12-25']
+Player: Christmas Day
+Team: lakers
+Best match: Kristaps Porziņģis - 28 pts
+Response: Anthony Davis | Points: 40 | Rebounds: 13 | Assists: 4 | game_id:22300403
+Result: {'player_name': 'Kristaps Porziņģis', 'points': 28, 'evidence': [{'table': 'player_box_score', 'id': 22300403}]}
+
+The response is different and final answer passed in the Result json is different.
+
+
+Fix these errors
+
+Prompt 12
+
+For such questions as well, the code should be able to get the date like 
+
+
+Q10: Which player had 40 points on 4/9 in the 2023 NBA Season?      
+
+The date is 04-09-2023.  
+
+Also, If there's no data for any question in the database, the answer for that particular question should be returned in the same template as specified in the answers_template.json file.
+
+Make changes to the rag.py file and return the entire file
+
+Prompt 13
+
+For this question,
+
+
+Q8: Who was the leading scorer in OKC's 144-110 victory over SAC on 2/1/2024, and how many points did he score?
+
+This question asked for leading scorer in OKC's 144-110 victory over SAC on 2/1/2024, and the number of points. Look at the response below:
+
+First 6 words: 'who was the leading scorer in'
+Query type: player
+Dates: ['2024-02-01', '2024-02-01']
+All teams mentioned: ['kings', 'thunder']
+Primary team: kings
+Opponent: kings
+After date filter: 1 rows
+After matchup filter (['kings', 'thunder']): 1 rows
+Leading scorer analysis: 1 players in game 22300687
+  Isaac Okoro - 6 pts
+Best match: Isaac Okoro - 6 pts on 2024-02-01
+  Game: Grizzlies vs Cavaliers
+Response: I must correct you that there is no mention of the OKC's team or a victory over SAC in the provided context. The context only mentions Isaac Okoro playing for the Cleveland Cavaliers (CLE) against the Grizzlies (MEM).
+
+Here's the answer based on the provided context:
+
+Isaac Okoro | Points: 6 | Rebounds: 4 | Assists: 0 | game_id: 22300687
+Result: {'player_name': 'Isaac Okoro', 'points': 6, 'evidence': [{'table': 'player_box_score', 'id': 22300687}]}
+
+The game data isn't found in the database, but even after that, the answer is provided for the top scorer of another game on the same date, which is incorrect. Make sure that if the game data for that particular game on that particular date is available, only produce an answer then, otherwise don't provide the answer. 
+
+Prompt 14
+
+Q9: How many points did Victor Wembanyama score in his NBA debut against the Dallas Mavericks on October 25, 2023?
+
+In this question, one team is not provided. Using information from the data in the database, extract the other team and then get the player stats for that game. The player name , match date and opponent team is provided. Keep a check in the code that both teams can't be the same.  Use details from all the tables. Check in game_details table for a match for Dallas Mavericks on 10/25/2023. That would give the opponent team. Using game_id for that game, and player_id from players table, find relevant information for that game_id and player_id from player_box_scores table. Make a similar logic for all such questions where player name , match date and one team is provided.
+
+Also make sure that if there's no information in the data, don't provide any response. 
+GIven below is embed.py file
+
+embed.py
+
+"""
+Create embeddings – Generate text embeddings with Ollama nomic-embed-text and store them alongside the source rows.
+"""
+
+import pandas as pd
+import sqlalchemy as sa
+from sqlalchemy import text
+from backend.config import DB_DSN, EMBED_MODEL
+from backend.utils import ollama_embed
+
+def row_text_game(r):
+    """Create embedding text for game_details table"""
+    ts = pd.to_datetime(r['game_timestamp'], utc=True)
+    date = ts.strftime('%Y-%m-%d')
+    day_name = ts.strftime('%A')
+    month_day = ts.strftime('%B %d')
+    
+    # Get team names
+    home_team = r['home_team_name'] if 'home_team_name' in r else f"team_{r['home_team_id']}"
+    away_team = r['away_team_name'] if 'away_team_name' in r else f"team_{r['away_team_id']}"
+    
+    hp = int(r['home_points'])
+    ap = int(r['away_points'])
+    
+    # Determine winner
+    winner = home_team if hp > ap else away_team
+    
+    # Special date handling
+    special_date = ""
+    if ts.month == 12 and ts.day == 25:
+        special_date = "Christmas Day | Christmas | "
+    elif ts.month == 12 and ts.day == 24:
+        special_date = "Christmas Eve | "
+    elif ts.month == 12 and ts.day == 31:
+        special_date = "New Year's Eve | New Years Eve | "
+    elif ts.month == 1 and ts.day == 1:
+        special_date = "New Year's Day | "
+    elif ts.month == 12 and ts.day == 26:
+        special_date = "Boxing Day | "
+    
+    return (
+        f"game | "
+        f"{special_date}"
+        f"season:{int(r['season'])} | "
+        f"date:{date} | "
+        f"day:{day_name} | "
+        f"month_day:{month_day} | "
+        f"home_team:{home_team} | "
+        f"away_team:{away_team} | "
+        f"home_team_id:{int(r['home_team_id'])} | "
+        f"away_team_id:{int(r['away_team_id'])} | "
+        f"home_points:{hp} | "
+        f"away_points:{ap} | "
+        f"winner:{winner} | "
+        f"final_score:{hp}-{ap}"
+    )
+
+def row_text_player_box(r):
+    """Create embedding text for player_box_scores table"""
+    player_name = f"{r['first_name']} {r['last_name']}"
+    team_name = r['team_name'] if 'team_name' in r else f"team_{r['team_id']}"
+    
+    ts = pd.to_datetime(r['game_timestamp'], utc=True)
+    date = ts.strftime('%Y-%m-%d')
+    
+    starter_status = "starter" if r['starter'] == 1 else "bench"
+    
+    # Calculate total rebounds
+    total_reb = int(r['offensive_reb']) + int(r['defensive_reb'])
+    
+    # Calculate field goal percentages
+    fg2_pct = (r['fg2_made'] / r['fg2_attempted'] * 100) if r['fg2_attempted'] > 0 else 0
+    fg3_pct = (r['fg3_made'] / r['fg3_attempted'] * 100) if r['fg3_attempted'] > 0 else 0
+    
+    # Special date handling
+    special_date = ""
+    if ts.month == 12 and ts.day == 25:
+        special_date = "Christmas Day | Christmas | "
+    elif ts.month == 12 and ts.day == 24:
+        special_date = "Christmas Eve | "
+    elif ts.month == 12 and ts.day == 31:
+        special_date = "New Year's Eve | New Years Eve | "
+    elif ts.month == 1 and ts.day == 1:
+        special_date = "New Year's Day | "
+    
+    return (
+        f"player_performance | "
+        f"{special_date}"
+        f"player:{player_name} | "
+        f"team:{team_name} | "
+        f"date:{date} | "
+        f"starter:{starter_status} | "
+        f"points:{int(r['points'])} | "
+        f"rebounds:{total_reb} | "
+        f"assists:{int(r['assists'])} | "
+        f"steals:{int(r['steals'])} | "
+        f"blocks:{int(r['blocks'])} | "
+        f"turnovers:{int(r['turnovers'])} | "
+        f"fg2_made:{int(r['fg2_made'])} | "
+        f"fg2_attempted:{int(r['fg2_attempted'])} | "
+        f"fg3_made:{int(r['fg3_made'])} | "
+        f"fg3_attempted:{int(r['fg3_attempted'])} | "
+        f"ft_made:{int(r['ft_made'])} | "
+        f"ft_attempted:{int(r['ft_attempted'])} | "
+        f"offensive_rebounds:{int(r['offensive_reb'])} | "
+        f"defensive_rebounds:{int(r['defensive_reb'])}"
+    )
+
+def main():
+    print("Starting Embedding Process")
+    eng = sa.create_engine(DB_DSN)
+    
+    with eng.begin() as cx:
+        cx.execute(text('ALTER DATABASE nba REFRESH COLLATION VERSION'))
+        
+        # Add embedding column to game_details
+        cx.execute(text("ALTER TABLE IF EXISTS game_details ADD COLUMN IF NOT EXISTS embedding vector(768);"))
+        cx.execute(text("CREATE INDEX IF NOT EXISTS idx_game_details_embedding ON game_details USING hnsw (embedding vector_cosine_ops);"))
+        
+        # Add embedding column to player_box_scores
+        cx.execute(text("ALTER TABLE IF EXISTS player_box_scores ADD COLUMN IF NOT EXISTS embedding vector(768);"))
+        cx.execute(text("CREATE INDEX IF NOT EXISTS idx_player_box_scores_embedding ON player_box_scores USING hnsw (embedding vector_cosine_ops);"))
+        
+        # Embed game_details with team names
+        print("Embedding game_details...")
+        game_query = """
+        SELECT gd.*, 
+               ht.name as home_team_name, ht.city as home_team_city,
+               at.name as away_team_name, at.city as away_team_city
+        FROM game_details gd
+        JOIN teams ht ON gd.home_team_id = ht.team_id
+        JOIN teams at ON gd.away_team_id = at.team_id
+        ORDER BY gd.game_timestamp DESC, gd.game_id DESC
+        """
+        df_games = pd.read_sql(game_query, cx)
+        
+        for _, r in df_games.iterrows():
+            vec = ollama_embed(EMBED_MODEL, row_text_game(r))
+            cx.execute(
+                text("UPDATE game_details SET embedding = :v WHERE game_id = :gid"), 
+                {"v": vec, "gid": int(r['game_id'])}
+            )
+        print(f"Finished game_details embeddings: {len(df_games)} rows")
+        
+        # Embed player_box_scores with player and team names
+        print("Embedding player_box_scores...")
+        player_query = """
+        SELECT pbs.*, 
+               p.first_name, p.last_name,
+               t.name as team_name, t.city as team_city,
+               gd.game_timestamp, gd.home_team_id, gd.away_team_id
+        FROM player_box_scores pbs
+        JOIN players p ON pbs.person_id = p.player_id
+        JOIN teams t ON pbs.team_id = t.team_id
+        JOIN game_details gd ON pbs.game_id = gd.game_id
+        ORDER BY gd.game_timestamp DESC
+        """
+        df_players = pd.read_sql(player_query, cx)
+        
+        for _, r in df_players.iterrows():
+            vec = ollama_embed(EMBED_MODEL, row_text_player_box(r))
+            cx.execute(
+                text("UPDATE player_box_scores SET embedding = :v WHERE game_id = :gid AND person_id = :pid"), 
+                {"v": vec, "gid": int(r['game_id']), "pid": int(r['person_id'])}
+            )
+        print(f"Finished player_box_scores embeddings: {len(df_players)} rows")
+    
+    print(f"Finished All Embeddings")
+
+
+if __name__ == "__main__":
+    main()
+
+Prompt 15
+
+Q10: Which player had 40 points on 4/9 in the 2023 NBA Season?   
+
+For this type of question , 2023 NBA season refers to 2023-2024 NBA season, and any season starts after October. So 4/9 here refers to 04/09/2024. The question is asking for the player who scored 40 points on 04/09/2024. Make changes to the code to address these type of questions. Also, make sure that only return answer if the data is available. Let's suppose in this context, if there's no player who scored 40 points on 04/09/2024, then provide an empty response as provided in template file. Don't return the highest points scorer for that day or any other data.
+
+Prompt 16
+
+In the Dallas Mavericks' 148-143 win over the Atlanta Hawks on 1-26-24, how many points did Luka Dončić score? 
+
+For this question, question is asked towards the end of the sentence. The question is asking how many points did Luka Doncic score in Dallas Mavericks' 148-143 win over the Atlanta Hawks on 1-26-24, Incorporate this logic in the code  where cues like" how many points did", "which team" etc could appear in any part of the sentence apart from beginning and the determination could be made that question is asking for a team or player.
+
