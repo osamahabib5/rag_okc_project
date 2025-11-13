@@ -1,121 +1,156 @@
-#  2025 Applied AI Engineer Internship Project
+rag_okc_project
 
-Your work must be your own and original. You may use AI tools to help aid your work if you include a single text file containing an ordered list of any AI prompts, along with the specific model queried (e.g. ChatGPT 5 Thinking) in the `prompts` directory. Do not include the AI's output.
+End-to-end Retrieval-Augmented Generation (RAG) Pipeline for NBA Stats
 
-### Internship Program Disclosures
+🎯 Project Overview
 
-* You must be eligible to work in the United States to be able to qualify for this internship.
+This project builds a full pipeline that lets you ask natural language questions about NBA game data and get answers grounded in the data. It consists of:
 
-* The pay for this internship is the greater of your local minimum wage and $13/hour.
+A backend ingestion, embedding, retrieval & answer-generation engine
 
-* This application is for the purposes of an internship taking place in the Spring, Summer, or Fall of 2026.
+A frontend chat interface to ask questions interactively
 
+Deployment ready via Docker and Docker Compose
 
-## Assignment: 
+The use case: You have CSVs of NBA game data (2023-24 & 2024-25 seasons, Western Conference teams) → store in PostgreSQL → create embeddings → retrieve relevant rows with semantic search (via pgvector) → feed context + user question into an LLM → get an answer with evidence from the retrieved data.
 
-The goal of this project is to build an end-to-end RAG pipeline with an interactive chat interface for answering basic NBA stats questions.
+🧱 Architecture & Key Components
+1. Data Ingestion
 
-1. Load data – Ingest CSVs related to NBA game information from the 2023-24 and 2024-25 seasons into PostgresSQL tables. Note this data is limited to only matchups involving at least one Western Conference team for size considerations.
-2. Create embeddings – Generate text embeddings with Ollama [`nomic-embed-text`](https://ollama.com/library/nomic-embed-text) and store them alongside the source rows.
-3. Retrieve and join – Perform semantic retrieval using the `pgvector` extension to find relevant game summaries, then join the matched embeddings back to the original structured table rows to provide factual context.
-4. Answer questions – Use Llama [`llama3.2:3b`](https://ollama.com/library/llama3.2:3b) to produce answers grounded on the retrieved data to the questions under the **Submission Requirements** section. If you find this model too large for your machine, feel free to use a smaller model and note this in your submission.
+backend/ingest.py: loads CSV files into PostgreSQL tables (game summaries, box scores, etc.)
 
-**The data provided in this repository is proprietary and strictly confidential. It is provided exclusively for use within this technical project and must not be copied, shared, or distributed.**
+Uses Docker-hosted database service (via docker-compose.yml)
 
-## Quick Start: Part 1
-1) Install [`Docker Desktop`](https://www.docker.com/get-started/) and open it (to ensure the docker daemon is running).
-2) Clone this repository.
-3) Start services and pull models by running the following commands:
-```bash
+2. Embeddings
+
+backend/embed.py: reads rows from the database, serialises text, generates embeddings via nomic‑embed‑text in Ollama, stores embeddings alongside source rows (via pgvector extension)
+
+3. Retrieval & Answer Generation
+
+backend/rag.py: given a question, uses the embedding store + semantic retrieval to find relevant context rows → joins them to structured data rows → constructs a prompt and calls an LLM (e.g., Llama3.2:3b) to produce an answer grounded in the evidence.
+
+Each answer output includes an evidence array listing the game_details or player_box_scores rows used.
+
+4. Frontend Chat Interface
+
+Located under frontend/: built with Angular (v15)
+
+Offers a chat UI that calls the backend server (via REST/HTTP) to send user questions and display answers + evidence
+
+Runs locally at http://localhost:4200 by default when started
+
+5. Deployment via Docker
+
+docker-compose.yml defines services: database (db), Ollama model host (ollama), application (app)
+
+Dockerfile builds the app image
+
+Quick start commands provided in the next section
+
+🚀 Quick Start
+Prerequisites
+
+Docker Desktop installed and running (ensures Docker daemon is active)
+
+Node.js 16.x (for frontend)
+
+Backend Setup
+git clone https://github.com/osamahabib5/rag_okc_project.git
+cd rag_okc_project
+# Start DB and model service
 docker compose up -d db ollama
+# Pull models in Ollama
 docker exec ollama ollama pull nomic-embed-text
 docker exec ollama ollama pull llama3.2:3b
+# Build the app service
 docker compose build app
-```
 
+Running the Pipeline
 
-Edit these files and run them using the following commands:
+Ingest data
 
-1) Ingestion (`backend/ingest.py`) for schema details
-```
 docker compose run --rm app python -m backend.ingest
-```
 
-2) Embedding (`backend/embed.py`) for text serialization strategy. **Note the embedding process can take a long time to complete depending on your machine**
-```
+
+Embed data
+
 docker compose run --rm app python -m backend.embed
-```
 
-3) RAG Script (`backend/rag.py`) for retrieval joins, prompt, and answer formatting. This script generates answers to the 10 prompts in Part 1.
-```
+
+Note: This step may take significant time depending on hardware.
+
+Run RAG script (answer the pre-set questions)
+
 docker compose run --rm app python -m backend.rag
-```
 
-## Quick Start: Part 2
-
-### Run the backend server
-```
+Launching Frontend & API Server
+# Start backend API server
 docker compose run --rm --service-ports app uvicorn backend.server:app --host 0.0.0.0 --port 8000 --reload
-```
 
-### Installing Prerequisites
-Install Node.js (16.x.x), then in a new tab, run the following commands
-```
-cd /path/to/project/frontend
-# Install Angular-Cli
-npm install -g @angular/cli@15.1.0 typescript@4.9.4 --force
-# Install dependencies
+# Then, in a new terminal:
+cd frontend
 npm install --force
-# Start the frontend
 npm start
-```
+# Visit http://localhost:4200 in your browser
 
-The frontend should run on http://localhost:4200/. Visit this address to see the app in your browser.
+📂 Project Structure
+├── backend/
+│   ├── ingest.py       # CSV → PostgreSQL
+│   ├── embed.py        # Generate & store embeddings
+│   ├── rag.py          # Retrieval + LLM answering script
+│   └── server.py       # FastAPI/UVicorn backend API (for chat interface)
+├── frontend/           # Angular chat interface
+├── part1/              # Part 1 assignment assets (questions.json etc)
+├── part2/              # Part 2 assets (UI demo video etc)
+├── part3/              # Part 3 – write-up responses
+├── part4/              # Optional fine-tuning of embeddings
+├── prompts/            # Directory to list any AI prompts used
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt
+└── README.md
 
+📋 Submission Requirements
 
-## Submission Requirements
+Part 1 (Backend RAG): Run the pipeline and answer the 10 game-level prompts in part1/questions.json. Save results in answers.json, each with evidence.
 
-Before starting with the project, __please fill out the [`SUBMISSION.md`](SUBMISSION.md) file__ to ensure we have your name and email address you applied to the role with.
+Part 2 (Frontend): Provide a chat interface that interacts with the backend retrieval+LLM pipeline.
 
-**Part 1: RAG Backend**
+Part 3 (Write-up): In part3/responses.txt, address the questions on your approach, learning, and exploratory ideas (each ≤500 words).
 
-- Answer the 10 game-level prompts in [`part1/questions.json`](part1/questions.json) using your retrieval pipeline and record results in a new file named [`answers.json`](part1/answers.json) by simply running the command for the [`rag.py`](backend/rag.py) file. Each answer should include an `evidence` array listing the `game_details` or `player_box_scores` rows used in the response.
+Part 4 (Optional): Fine-tune an embedding model (e.g., intfloat/e5-base-v2) on <20 question–context pairs, evaluate retrieval performance, document in part4/responses.txt.
 
+🧠 Why This Matters
 
-**Part 2: Frontend Solution**
+This project combines structured sports data, semantic embeddings, vector-search retrieval, and LLMs to create a user-facing application. It demonstrates skills in:
 
-- Create a chat interface for interacting with the backend retrieval pipeline. Some minimal Angular skeleton code is provided in the [`frontend/src/app`](frontend/src/app) directory, feel free to edit it as you wish.
+Data ingestion and relational database design
 
-Submit a video in the [`part2`](part2) folder that demonstrates how your UI functions.
+Embedding generation and vector search (via pgvector)
 
+Prompt engineering and LLM grounding in factual data
 
-**Part 3: Writeup**
+Full stack development (backend API + frontend chat UI)
 
-Note: for this particular section, we **strongly** suggest you avoid using any AI tools to answer any of these questions. We want these responses to be your own voice and show your true understanding of the content. Please limit each response to 500 words or fewer.
+DevOps / containerisation with Docker
 
-1. Discuss your approach to answering the questions in Parts 1 and 2. Include your experimental process in regards to data preparation, embedding design, retrieval, prompt engineering, user experience, etc. Describe any challenges you faced and how you overcame them.
+(Optional) Embedding fine-tuning and retrieval evaluation
 
-2. Describe your technical skillset and how it relates to the questions answered in this assignment. What did you learn as you went through this assignment, and what do you hope to learn in these related areas?
+🔧 Customisation & Next Steps
 
-3. You have data at the sub-possession level capturing basic events like passes, screens, and drives with court coordinates for the ball as well as all 10 players on the court. Describe any ways you would explore this data to answer in-game strategy questions.
+Change or extend the dataset (e.g., include Eastern Conference, other seasons)
 
-4. You have [player positional tracking data](https://pr.nba.com/nba-sony-hawk-eye-innovations-partnership/); assume 29 skeletal points per player (e.g. joints like left shoulder, right knee, right ankle, etc), sampled at 60 frames per second for the full game. How you would harness this high-dimensional data to generate actionable insights for Basketball Operations? Propose three new features, describe how you’d explore the data, and note which technologies you’d apply.
+Use a different embedding model or vector store
 
-5. You have a large text corpus, including scouting reports, internal notes, and other documents that define decision constraints for Basketball Operations. How would you design an end-to-end process to turn this into findings to support front-office decision-making?  Describe your technical strategies (e.g., NLP, embeddings, retrieval, LLMs), including data representation, analysis, validation, and integration into workflows.
+Replace Llama3.2 with a larger/smaller LLM depending on resources
 
+Improve frontend UI/UX: add chat history, user authentication, interactive visualisations
 
-Put your responses to the questions in Part 3 in [`part3/responses.txt`](part3/responses.txt).
+Deploy to the cloud (AWS/GCP/Azure) and expose via a web app
 
+Add metrics logging: embedding latency, retrieval recall, user feedback loop
 
-## Optional
+🧾 License & Data Usage
 
-**Part 4: Embedding Fine-Tuning**
-- Build a small dataset of question–context pairs about NBA games and fine-tune the Hugging Face [`intfloat/e5-base-v2`](https://huggingface.co/intfloat/e5-base-v2) model. [`Text Embeddings by Weakly-Supervised Contrastive Pre-training`](https://arxiv.org/pdf/2212.03533) (Wang et al., 2022) shows how E5's contrastive objective yields strong universal embeddings, making it a good candidate for customization.
-
-1. Assemble training data – Create at least 20 question–context pairs from the game summaries in this repo (or generate synthetic ones). Each pair should contain a question and a short text snippet that answers it.
-2. Fine-tune an embedding model – Start from the encoder and train it with contrastive learning so matching question/context pairs obtain high cosine similarity. Log the training configuration and any hyperparameters you change.
-3. Evaluate retrieval – Compare your fine-tuned model against the baseline `nomic-embed-text` using a held-out set of queries. Report metrics such as Recall@k or MRR.
-4. Document results – Summarize your approach, hyperparameters, and evaluation numbers in [`part4/responses.txt`](part4/responses.txt). Include any code or commands used to run the experiment.
-
-Put all relevant files in the [`part4`](part4) folder in this repository.
-Note that this part of the project is optional. We do not expect every applicant to complete this portion. 
+Note: The data provided in this repository is proprietary and strictly confidential. It’s provided exclusively for use within this technical project and must not be copied, shared, or distributed.
+If you adapt this architecture with your own publicly available data, ensure that you respect licensing and privacy constraints.
