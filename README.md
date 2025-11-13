@@ -116,10 +116,6 @@ Part 1 (Backend RAG): Run the pipeline and answer the 10 game-level prompts in p
 
 Part 2 (Frontend): Provide a chat interface that interacts with the backend retrieval+LLM pipeline.
 
-Part 3 (Write-up): In part3/responses.txt, address the questions on your approach, learning, and exploratory ideas (each ≤500 words).
-
-Part 4 (Optional): Fine-tune an embedding model (e.g., intfloat/e5-base-v2) on <20 question–context pairs, evaluate retrieval performance, document in part4/responses.txt.
-
 🧠 Why This Matters
 
 This project combines structured sports data, semantic embeddings, vector-search retrieval, and LLMs to create a user-facing application. It demonstrates skills in:
@@ -150,7 +146,3 @@ Deploy to the cloud (AWS/GCP/Azure) and expose via a web app
 
 Add metrics logging: embedding latency, retrieval recall, user feedback loop
 
-🧾 License & Data Usage
-
-Note: The data provided in this repository is proprietary and strictly confidential. It’s provided exclusively for use within this technical project and must not be copied, shared, or distributed.
-If you adapt this architecture with your own publicly available data, ensure that you respect licensing and privacy constraints.
