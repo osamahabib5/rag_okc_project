@@ -37,6 +37,7 @@ services:
       - ./app:/app/app
       - ./part1:/app/part1
       - ./backend:/app/backend
+      - ./part4:/app/part4
     ports: ["8000:8000"]
     command: >
       sh -c "uvicorn app.server:app
